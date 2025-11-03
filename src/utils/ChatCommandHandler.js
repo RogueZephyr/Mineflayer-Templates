@@ -1,18 +1,24 @@
 // src/modules/ChatCommandHandler.js
 import chalk from 'chalk';
 import Logger from './logger.js';
+import { PathfinderBehavior } from '../behaviors/PathfinderBehavior.js';
+
 
 const cmdPrefix = '!'; // for public commands like !come, !stop, etc.
 
 export default class ChatCommandHandler {
-  constructor(bot, master) {
+  constructor(bot, master, behaviors = {}) {
     this.bot = bot;
     this.master = master;
+    this.behaviors = behaviors;
     this.logger = new Logger();
     this.commands = new Map(); // stores commandName -> handler function
 
     this.registerDefaultCommands();
     this.initListeners();
+
+    this.pathfinder = new PathfinderBehavior(this.bot);
+    this.pathfinder.initialize();
   }
 
   initListeners() {
@@ -71,6 +77,85 @@ export default class ChatCommandHandler {
       const message = args.join(' ');
       if (message.length > 0) this.bot.chat(message);
     });
+
+    // 🧭 Movement Commands
+    this.register('come', (username) => {
+        this.pathfinder.comeTo(username);
+    });
+
+    this.register('goto', (username, args) => {
+        if (args.length < 3) {
+        this.bot.chat('Usage: !goto <x> <y> <z>');
+        return;
+        }
+        const [x, y, z] = args.map(Number);
+        this.pathfinder.goTo(x, y, z);
+    });
+
+    this.register('follow', (username, args) => {
+        if (!args[0]) {
+        this.bot.chat('Usage: !follow <playerName>');
+        return;
+        }
+        this.pathfinder.followPlayer(args[0]);
+    });
+
+    this.register('stop', () => {
+        this.pathfinder.stop();
+    });
+
+    this.register('eat', async (username) => {
+        if (!this.behaviors?.eat) {
+            this.bot.chat("Eat behavior not available.");
+            return;
+        }
+        try {
+            await this.behaviors.eat.checkHunger();
+        } catch (err) {
+            this.logger.error(`Error eating: ${err}`);
+        }
+    });
+
+    this.register('sleep', async (username) => {
+      if (!this.behaviors.sleep) return;
+      await this.behaviors.sleep.sleep();
+    });
+
+    this.register('loginv', (username) => {
+        console.log(this.bot.inventory.items().map(i => `${i.name} x${i.count}`));
+    })
+
+    this.register('look', (username, args) => {
+        const lookBehavior = this.behaviors.look;
+        if (!lookBehavior) {
+            this.bot.chat("LookBehavior is not available.");
+            return;
+        }
+
+        // toggle or explicitly enable/disable
+        if (args[0]) {
+            const action = args[0].toLowerCase();
+            if (action === 'on') {
+            lookBehavior.enable();
+            this.bot.chat("LookBehavior enabled.");
+            } else if (action === 'off') {
+            lookBehavior.disable();
+            this.bot.chat("LookBehavior disabled.");
+            } else {
+            this.bot.chat("Usage: !look <on|off>");
+            }
+        } else {
+            // toggle automatically if no argument
+            if (lookBehavior.enabled) {
+            lookBehavior.disable();
+            this.bot.chat("LookBehavior disabled.");
+            } else {
+            lookBehavior.enable();
+            this.bot.chat("LookBehavior enabled.");
+            }
+        }
+    });
+
   }
 
   register(name, handler) {

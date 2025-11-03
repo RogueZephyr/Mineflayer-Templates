@@ -8,7 +8,14 @@
     "look": {
       "updateInterval": 20,
       "maxDistance": 6
+    },
+    "sleep": {
+      "bedColor": "blue"
+    },
+    "eat": {
+      "minFood": 16
     }
+    
   },
   "dashboard": { "enabled": true, "port": 3000 }
 }

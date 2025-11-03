@@ -9,6 +9,8 @@ import LookBehavior from '../behaviors/LookBehavior.js';
 import Logger from '../utils/logger.js';
 import ChatLogger from '../behaviors/ChatLogger.js'
 import ChatCommandHandler from '../utils/ChatCommandHandler.js';
+import EatBehavior from '../behaviors/EatBehavior.js';
+import SleepBehavior from '../behaviors/SleepBehavior.js';
 
 export default class BotController {
   static usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t']
@@ -81,8 +83,22 @@ export default class BotController {
     this.behaviors.chatLogger.enable()
     this.logger.info('ChatLogger initialized successfully!')
 
-    this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master);
+    this.behaviors.eat = new EatBehavior(this.bot, this.logger, this.master);
+    this.behaviors.sleep = new SleepBehavior(
+      this.bot,
+      this.mcData,
+      this.logger,
+      { bedColor: this.config.behaviors?.sleep?.bedColor || 'red' },
+      { look: this.behaviors.look } // pass LookBehavior instance
+    );
+
+
+    this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors);
     this.logger.info('ChatCommandHandler initialized successfully!');
+
+    setInterval(() => {
+      this.behaviors.eat.checkHunger();
+    }, 10000); // check every 10 seconds
 
     // if you want an API to toggle behaviors later:
     // this.enableBehavior('look');
@@ -113,5 +129,33 @@ export default class BotController {
   disableBehavior(name) {
     const b = this.behaviors[name];
     if (b && typeof b.disable === 'function') b.disable();
+  }
+
+  logInventory() {
+    console.log(this.bot.inventory.items().map(i => `${i.name} x${i.count}`));
+  }
+
+  disableBehaviors(names = []) {
+    names.forEach(name => {
+      const b = this.behaviors[name];
+      if (b && b.enabled) b.disable();
+    });
+  }
+
+  enableBehaviors(names = []) {
+    names.forEach(name => {
+      const b = this.behaviors[name];
+      if (b && !b.enabled) b.enable();
+    });
+  }
+
+  // Helper to run async code while other behaviors are disabled
+  async withBehaviorsDisabled(names = [], action) {
+    this.disableBehaviors(names);
+    try {
+      await action();
+    } finally {
+      this.enableBehaviors(names);
+    }
   }
 }

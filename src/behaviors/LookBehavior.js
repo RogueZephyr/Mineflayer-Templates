@@ -20,6 +20,16 @@ export default class LookBehavior {
     this.onEntityGone = this.onEntityGone.bind(this);
     this.updateLookTarget = this.updateLookTarget.bind(this);
 
+    this.bot.on('path_update', (r) => {
+      if (r.status === 'success' || r.status === 'incomplete') {
+        this.disable();
+      }
+    });
+
+    this.bot.on('goal_reached', () => {
+        this.enable();
+    });
+
     this.bot.on('entitySpawn', this.onEntitySpawn);
     this.bot.on('entityGone', this.onEntityGone);
 

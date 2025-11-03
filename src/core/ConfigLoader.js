@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 
 class ConfigLoader {
-  static loadConfig(filePath = './config.json') {
+  static loadConfig(filePath = '../src/config/config.json') {
     try {
       const absolutePath = path.resolve(filePath)
       const data = fs.readFileSync(absolutePath, 'utf-8')
