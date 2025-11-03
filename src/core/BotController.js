@@ -7,10 +7,11 @@ import figlet from 'figlet';
 
 import LookBehavior from '../behaviors/LookBehavior.js';
 import Logger from '../utils/logger.js';
-import ChatLogger from '../behaviors/ChatLogger.js'
+import ChatLogger from '../behaviors/ChatLogger.js';
 import ChatCommandHandler from '../utils/ChatCommandHandler.js';
 import EatBehavior from '../behaviors/EatBehavior.js';
 import SleepBehavior from '../behaviors/SleepBehavior.js';
+import InventoryBehavior from '../behaviors/InventoryBehavior.js';
 
 export default class BotController {
   static usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t']
@@ -92,6 +93,9 @@ export default class BotController {
       { look: this.behaviors.look } // pass LookBehavior instance
     );
 
+    // in onSpawn() of BotController
+    this.behaviors.inventory = new InventoryBehavior(this.bot, this.logger);
+    this.behaviors.inventory.logInventory();
 
     this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors);
     this.logger.info('ChatCommandHandler initialized successfully!');
@@ -121,20 +125,6 @@ export default class BotController {
     this.behaviors[name] = behaviorInstance;
   }
 
-  enableBehavior(name) {
-    const b = this.behaviors[name];
-    if (b && typeof b.enable === 'function') b.enable();
-  }
-
-  disableBehavior(name) {
-    const b = this.behaviors[name];
-    if (b && typeof b.disable === 'function') b.disable();
-  }
-
-  logInventory() {
-    console.log(this.bot.inventory.items().map(i => `${i.name} x${i.count}`));
-  }
-
   disableBehaviors(names = []) {
     names.forEach(name => {
       const b = this.behaviors[name];
@@ -147,15 +137,5 @@ export default class BotController {
       const b = this.behaviors[name];
       if (b && !b.enabled) b.enable();
     });
-  }
-
-  // Helper to run async code while other behaviors are disabled
-  async withBehaviorsDisabled(names = [], action) {
-    this.disableBehaviors(names);
-    try {
-      await action();
-    } finally {
-      this.enableBehaviors(names);
-    }
   }
 }

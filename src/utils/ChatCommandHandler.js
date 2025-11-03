@@ -1,4 +1,4 @@
-// src/modules/ChatCommandHandler.js
+// src/utils/ChatCommandHandler.js
 import chalk from 'chalk';
 import Logger from './logger.js';
 import { PathfinderBehavior } from '../behaviors/PathfinderBehavior.js';
@@ -122,8 +122,58 @@ export default class ChatCommandHandler {
     });
 
     this.register('loginv', (username) => {
-        console.log(this.bot.inventory.items().map(i => `${i.name} x${i.count}`));
-    })
+        if (!this.behaviors.inventory) return;
+        this.behaviors.inventory.logInventory();
+    });
+
+    this.register('drop', async (username, args) => {
+      if (!this.behaviors.inventory) return;
+
+      if (!args[0]) {
+        this.bot.chat("Usage: !drop <wood|ores|resources|itemName>");
+        return;
+      }
+
+      const type = args[0].toLowerCase();
+      const success = await this.behaviors.inventory.dropItem(type);
+      if (success) this.bot.chat(`Dropped all ${type}`);
+      else this.bot.chat(`No ${type} found to drop`);
+    });
+
+    // inside registerDefaultCommands() of ChatCommandHandler
+
+    this.register('deposit', async (username, args) => {
+      if (!this.behaviors.inventory) {
+        this.bot.chat("Inventory behavior not available.");
+        return;
+      }
+
+      if (args.length < 3) {
+        this.bot.chat("Usage: !deposit <x> <y> <z> [all|wood|ores|resources|itemName]");
+        return;
+      }
+
+      const [xStr, yStr, zStr, typeArg] = args;
+      const x = parseInt(xStr, 10);
+      const y = parseInt(yStr, 10);
+      const z = parseInt(zStr, 10);
+      const type = typeArg || 'all';
+
+      if (isNaN(x) || isNaN(y) || isNaN(z)) {
+        this.bot.chat("Invalid coordinates. Usage: !deposit <x> <y> <z> [all|wood|ores|resources|itemName]");
+        return;
+      }
+
+      this.bot.chat(`Depositing ${type} to chest at (${x}, ${y}, ${z})...`);
+      try {
+        const success = await this.behaviors.inventory.depositToChest({ x, y, z }, type);
+        if (success) this.bot.chat(`✅ Successfully deposited ${type} items.`);
+        else this.bot.chat(`⚠️ No items deposited.`);
+      } catch (err) {
+        this.bot.chat(`❌ Failed to deposit items: ${err.message}`);
+      }
+    });
+
 
     this.register('look', (username, args) => {
         const lookBehavior = this.behaviors.look;

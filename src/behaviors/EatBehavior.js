@@ -30,7 +30,7 @@ export default class EatBehavior {
     }
 
     if (this.bot.food >= this.hungerThreshold) {
-      this.logger.info(`No need to eat tight now. ${this.bot.food}`);
+      //this.logger.info(`No need to eat tight now. ${this.bot.food}`);
       return;
     }
 
