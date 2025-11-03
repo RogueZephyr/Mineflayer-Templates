@@ -2,7 +2,7 @@
 import chalk from 'chalk';
 import Logger from './logger.js';
 import { PathfinderBehavior } from '../behaviors/PathfinderBehavior.js';
-
+import SaveChestLocation from '../utils/SaveChestLocation.js';
 
 const cmdPrefix = '!'; // for public commands like !come, !stop, etc.
 
@@ -19,6 +19,8 @@ export default class ChatCommandHandler {
 
     this.pathfinder = new PathfinderBehavior(this.bot);
     this.pathfinder.initialize();
+
+    this.chestRegistry = new SaveChestLocation(this.bot);
   }
 
   initListeners() {
@@ -140,8 +142,6 @@ export default class ChatCommandHandler {
       else this.bot.chat(`No ${type} found to drop`);
     });
 
-    // inside registerDefaultCommands() of ChatCommandHandler
-
     this.register('deposit', async (username, args) => {
       if (!this.behaviors.inventory) {
         this.bot.chat("Inventory behavior not available.");
@@ -174,6 +174,109 @@ export default class ChatCommandHandler {
       }
     });
 
+    this.register('depositall', async (username, args) => {
+      if (!this.behaviors.deposit) {
+        this.bot.chat("Deposit behavior not available.");
+        return;
+      }
+
+      this.bot.chat(`Depositing all categorized items...`);
+      try {
+        await this.behaviors.deposit.depositAllCategorized();
+        this.bot.chat(`✅ All categorized items deposited successfully.`);
+      } catch (err) {
+        this.bot.chat(`❌ Failed to deposit all: ${err.message}`);
+      }
+    });
+
+    this.register('depositnearest', async (username, args) => {
+      if (!this.behaviors.inventory) {
+        this.bot.chat("Inventory behavior not available.");
+        return;
+      }
+
+      const type = args[0] || 'all';
+      this.bot.chat(`Depositing ${type} items into nearest chest...`);
+      try {
+        const success = await this.behaviors.inventory.depositNearest(type);
+        if (success) this.bot.chat(`✅ Successfully deposited ${type} items.`);
+        else this.bot.chat(`⚠️ No items deposited or no nearby chest found.`);
+      } catch (err) {
+        this.bot.chat(`❌ Deposit failed: ${err.message}`);
+      }
+    });
+
+    this.register('setchest', async (username, args) => {
+      if (!this.behaviors.deposit) {
+        this.bot.chat("Deposit behavior not available.");
+        return;
+      }
+
+      if (!args[0]) {
+        this.bot.chat("Usage: !setchest <category>");
+        return;
+      }
+
+      const category = args[0].toLowerCase();
+
+      try {
+        // Try to get the block the bot is looking at
+        const block = this.bot.blockAtCursor(5);
+        let chestPos = null;
+
+        // Prefer the block in view
+        if (block && block.name.includes('chest')) {
+          chestPos = block.position;
+        } else {
+          // Otherwise, find the nearest chest in 5 blocks radius
+          const nearestChest = this.bot.findBlock({
+            matching: blk => blk.name.includes('chest'),
+            maxDistance: 5
+          });
+          if (nearestChest) chestPos = nearestChest.position;
+        }
+
+        if (!chestPos) {
+          this.bot.chat("❌ No chest found nearby or in view.");
+          return;
+        }
+
+        await this.behaviors.deposit.saveChestLocation(category, chestPos);
+        this.bot.chat(`✅ ${category} chest set at (${chestPos.x}, ${chestPos.y}, ${chestPos.z})`);
+      } catch (err) {
+        this.bot.chat(`❌ Failed to set chest: ${err.message}`);
+      }
+    });
+
+    // 📍 Manual Chest Configuration
+    this.register('setchestmanual', async (username, args) => {
+      if (!this.behaviors.deposit) {
+        this.bot.chat("Deposit behavior not available.");
+        return;
+      }
+
+      if (args.length < 4) {
+        this.bot.chat("Usage: !setchestmanual <category> <x> <y> <z>");
+        return;
+      }
+
+      const [category, xStr, yStr, zStr] = args;
+      const x = parseInt(xStr, 10);
+      const y = parseInt(yStr, 10);
+      const z = parseInt(zStr, 10);
+
+      if (isNaN(x) || isNaN(y) || isNaN(z)) {
+        this.bot.chat("Invalid coordinates. Usage: !setchestmanual <category> <x> <y> <z>");
+        return;
+      }
+
+      try {
+        await this.behaviors.deposit.saveChestLocation(category.toLowerCase(), { x, y, z });
+        this.bot.chat(`✅ Manually set ${category} chest at (${x}, ${y}, ${z})`);
+      } catch (err) {
+        this.bot.chat(`❌ Failed to save chest: ${err.message}`);
+      }
+    });
 
     this.register('look', (username, args) => {
         const lookBehavior = this.behaviors.look;

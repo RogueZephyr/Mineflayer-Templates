@@ -4,8 +4,15 @@ import chalk from 'chalk';
 import pkg from 'mineflayer-pathfinder';
 const { Movements, goals } = pkg;
 const { GoalNear } = goals;
+import fs from 'fs';
+import path from 'path';
+
+import { Vec3 } from 'vec3';
 
 const logLabel = chalk.green('[Inventory]');
+
+const categoriesPath = path.resolve('./src/config/itemCategories.json');
+const itemCategories = JSON.parse(fs.readFileSync(categoriesPath, 'utf-8'));
 
 export default class InventoryBehavior {
 /** 
@@ -85,7 +92,7 @@ export default class InventoryBehavior {
         break;
         case 'ores':
         itemsToDrop = this.bot.inventory.items().filter(i =>
-            ['raw_iron', 'raw_gold', 'diamond', 'emerald', 'lapis_lazuli', 'redstone', 'raw_copper', 'nether_quartz'].includes(i.name)
+            (itemCategories.ores || []).includes(i.name)
         );
         break;
         case 'resources':
@@ -113,6 +120,100 @@ export default class InventoryBehavior {
 
         return true;
     }
+    async depositNearest(type = 'all', searchRadius = 15) {
+        if (!this.enabled) return false;
+        if (!this.bot.pathfinder) {
+            this.logger.warn('[Inventory] Pathfinder not available.');
+            return false;
+        }
+
+        try {
+            const mcData = (await import('minecraft-data')).default(this.bot.version);
+            const defaultMovements = new Movements(this.bot, mcData);
+            this.bot.pathfinder.setMovements(defaultMovements);
+
+            // Find nearest chest/barrel/shulker
+            const chestBlocks = this.bot.findBlocks({
+            matching: block => {
+                const name = block.name;
+                return (
+                name.includes('chest') ||
+                name.includes('barrel') ||
+                name.includes('shulker_box')
+                );
+            },
+            maxDistance: searchRadius,
+            count: 10,
+            });
+
+            if (!chestBlocks.length) {
+            this.logger.warn(`[Inventory] No container found within ${searchRadius} blocks.`);
+            return false;
+            }
+
+            // Pick nearest container
+            const nearest = chestBlocks
+            .map(pos => ({
+                pos,
+                distance: this.bot.entity.position.distanceTo(pos),
+            }))
+            .sort((a, b) => a.distance - b.distance)[0];
+
+            this.logger.info(`[Inventory] Nearest container found at ${nearest.pos}`);
+
+            // Move to chest
+            const goal = new GoalNear(nearest.pos.x, nearest.pos.y, nearest.pos.z, 1);
+            await this.bot.pathfinder.goto(goal);
+
+            // Open chest
+            const chestBlock = this.bot.blockAt(nearest.pos);
+            if (!chestBlock) throw new Error('Chest not found at detected position.');
+
+            const chest = await this.bot.openContainer(chestBlock);
+
+            // Determine what to deposit
+            let itemsToDeposit = [];
+            const items = this.bot.inventory.items();
+
+            if (type === 'all') itemsToDeposit = items;
+            else if (type === 'wood') itemsToDeposit = items.filter(i => i.name.includes('log') || i.name.includes('wood'));
+            else if (type === 'ores')
+            itemsToDeposit = items.filter(i =>
+                ['coal', 'iron', 'gold', 'diamond', 'emerald', 'lapis', 'redstone', 'netherite'].some(res =>
+                i.name.includes(res)
+                )
+            );
+            else if (type === 'resources')
+            itemsToDeposit = items.filter(i =>
+                ['raw', 'ingot', 'gem', 'diamond', 'emerald', 'lapis', 'redstone', 'netherite'].some(res =>
+                i.name.includes(res)
+                )
+            );
+            else itemsToDeposit = items.filter(i => i.name === type);
+
+            if (itemsToDeposit.length === 0) {
+            this.logger.warn(`[Inventory] No items to deposit for type "${type}"`);
+            chest.close();
+            return false;
+            }
+
+            for (const item of itemsToDeposit) {
+            try {
+                await chest.deposit(item.type, null, item.count);
+                this.logger.info(`[Inventory] Deposited ${item.count}x ${item.name}`);
+            } catch (err) {
+                this.logger.error(`[Inventory] Could not deposit ${item.name}: ${err.message}`);
+            }
+            }
+
+            chest.close();
+            return true;
+        } catch (err) {
+            this.logger.error(`[Inventory] depositNearest() failed: ${err}`);
+            return false;
+        }
+        }
+
 
     async depositToChest(chestPos, type = 'all') {
         if (!this.enabled) return false;
@@ -122,52 +223,95 @@ export default class InventoryBehavior {
         }
 
         try {
-            // Ensure proper movements
-            const mcData = require('minecraft-data')(this.bot.version);
+            // Dynamic import for minecraft-data (ESM-safe)
+            const mcData = await import('minecraft-data').then(m => m.default(this.bot.version));
+
+            // Create Movements and set them
             const defaultMovements = new Movements(this.bot, mcData);
             this.bot.pathfinder.setMovements(defaultMovements);
 
-            // Go near the chest
-            const goal = new GoalNear(chestPos.x, chestPos.y, chestPos.z, 1);
+            // Ensure we have a Vec3 point (findBlock expects a Vec3 with .floored())
+            const Vec3Module = await import('vec3').then(m => m.default || m);
+            const point = new Vec3Module(Math.floor(chestPos.x), Math.floor(chestPos.y), Math.floor(chestPos.z));
+
+            // Find an actual chest block near the provided point (within 5 blocks)
+            const targetChest = this.bot.findBlock({
+            matching: b => b && b.name && b.name.includes('chest'),
+            maxDistance: 5,
+            point
+            });
+
+            if (!targetChest) {
+            throw new Error('No chest found near provided coordinates.');
+            }
+
+            // If already near enough, skip pathfinding
+            const dist = this.bot.entity.position.distanceTo(targetChest.position);
+            if (dist > 2.2) {
+            this.logger.info(`[Inventory] Moving ${dist.toFixed(1)} blocks to chest...`);
+            const goal = new GoalNear(targetChest.position.x, targetChest.position.y, targetChest.position.z, 1);
             await this.bot.pathfinder.goto(goal);
-
-            // Open chest
-            const chestBlock = this.bot.blockAt(chestPos);
-            if (!chestBlock) throw new Error('Chest not found at position!');
-
-            const chest = await this.bot.openChest(chestBlock);
-
-            // Determine items to deposit
-            let itemsToDeposit = [];
-            if (type === 'all') {
-                itemsToDeposit = this.bot.inventory.items();
-            } else if (type === 'wood') {
-                itemsToDeposit = this.bot.inventory.items().filter(i => i.name.includes('log') || i.name.includes('wood'));
-            } else if (type === 'ores') {
-                itemsToDeposit = this.bot.inventory.items().filter(i =>
-                    ['coal', 'iron', 'gold', 'diamond', 'emerald', 'lapis', 'redstone', 'netherite'].some(res => i.name.includes(res))
-                );
-            } else if (type === 'resources') {
-                itemsToDeposit = this.bot.inventory.items().filter(i =>
-                    ['raw', 'ingot', 'gem', 'diamond', 'emerald', 'lapis', 'redstone', 'netherite'].some(res => i.name.includes(res))
-                );
             } else {
-                // Specific item name
-                itemsToDeposit = this.bot.inventory.items().filter(i => i.name === type);
+            this.logger.info('[Inventory] Already near chest, skipping movement.');
             }
 
+            // Open the chest container
+            const chestWindow = await this.bot.openChest(targetChest);
+            if (!chestWindow) throw new Error('Failed to open chest.');
+
+            // Choose items to deposit
+            const items = this.bot.inventory.items();
+            let itemsToDeposit = [];
+
+            switch ((type || 'all').toLowerCase()) {
+            case 'all':
+                itemsToDeposit = items.slice(); // copy
+                break;
+            case 'wood':
+                itemsToDeposit = items.filter(i => i.name.includes('log') || i.name.includes('wood'));
+                break;
+            case 'ores':
+                itemsToDeposit = items.filter(i =>
+                ['coal', 'iron', 'gold', 'diamond', 'emerald', 'lapis', 'redstone', 'netherite', 'copper'].some(res => i.name.includes(res))
+                );
+                break;
+            case 'resources':
+                itemsToDeposit = items.filter(i =>
+                ['raw', 'ingot', 'gem', 'diamond', 'emerald', 'lapis', 'redstone', 'netherite', 'coal'].some(res => i.name.includes(res))
+                );
+                break;
+            default:
+                itemsToDeposit = items.filter(i => i.name === type);
+            }
+
+            if (itemsToDeposit.length === 0) {
+            this.logger.warn(`[Inventory] No items found matching type: ${type}`);
+            chestWindow.close();
+            return false;
+            }
+
+            // Deposit with a small delay between each operation to prevent desyncs
             for (const item of itemsToDeposit) {
-                await chest.deposit(item.type, null, item.count);
+            try {
+                await chestWindow.deposit(item.type, null, item.count);
                 this.logger.info(`[Inventory] Deposited ${item.name} x${item.count}`);
+                // small delay
+                await new Promise(res => setTimeout(res, 200));
+            } catch (err) {
+                this.logger.error(`[Inventory] Failed to deposit ${item.name}: ${err.message || err}`);
+            }
             }
 
-            chest.close();
+            chestWindow.close();
+            this.logger.success('[Inventory] Finished depositing successfully!');
             return true;
         } catch (err) {
-            this.logger.error(`[Inventory] Failed to deposit: ${err}`);
+            this.logger.error(`[Inventory] Failed to deposit: ${err.message || err}`);
             return false;
         }
-    }
+        }
+
+
 
     // Pickup item from the ground (simplified)
     async pickupItem(itemName, maxDistance = 5) {
@@ -183,12 +327,8 @@ export default class InventoryBehavior {
         }
 
         try {
-            await this.bot.pathfinder.goto(new GoalNear(
-                target.position.x,
-                target.position.y,
-                target.position.z,
-                1
-            ));
+            const pickupPos = new Vec3(target.position.x, target.position.y, target.position.z);
+            await this.bot.pathfinder.goto(new GoalNear(pickupPos.x, pickupPos.y, pickupPos.z, 1));
             await this.bot.collectBlock.collect(target);
             this.logger.info(`${logLabel} Picked up ${itemName}`);
             return true;

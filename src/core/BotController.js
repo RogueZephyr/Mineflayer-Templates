@@ -12,6 +12,7 @@ import ChatCommandHandler from '../utils/ChatCommandHandler.js';
 import EatBehavior from '../behaviors/EatBehavior.js';
 import SleepBehavior from '../behaviors/SleepBehavior.js';
 import InventoryBehavior from '../behaviors/InventoryBehavior.js';
+import DepositBehavior from '../behaviors/DepositBehavior.js';
 
 export default class BotController {
   static usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t']
@@ -25,6 +26,7 @@ export default class BotController {
     this.logger = new Logger();
     this.behaviors = {};
     this.master = 'RogueZ3phyr';
+    this.hungerCheckInterval = null;
   }
 
   getAvailableUsername() {
@@ -54,8 +56,12 @@ export default class BotController {
 
     // global error handling
     this.bot.on('kicked', (reason) => this.logger.warn(`Kicked: ${reason}`));
-    this.bot.on('end', () => {this.logger.warn('Connection ended'); this.onEnd();});
+    this.bot.on('end', (reason) => {
+      this.logger.warn(`Connection ended. Reason: ${reason || 'unknown'}`);
+      this.onEnd();
+    });
     this.bot.on('error', (err) => this.logger.error(`Bot error: ${err}`));
+    this.bot.on('disconnect', (packet) => this.logger.warn(`Disconnected: ${JSON.stringify(packet)}`));
   }
 
   onLogin() {
@@ -93,16 +99,28 @@ export default class BotController {
       { look: this.behaviors.look } // pass LookBehavior instance
     );
 
-    // in onSpawn() of BotController
     this.behaviors.inventory = new InventoryBehavior(this.bot, this.logger);
     this.behaviors.inventory.logInventory();
+    this.behaviors.deposit = new DepositBehavior(this.bot, this.logger);
+    this.logger.info('DepositBehavior initialized successfully!');
 
     this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors);
     this.logger.info('ChatCommandHandler initialized successfully!');
 
-    setInterval(() => {
-      this.behaviors.eat.checkHunger();
-    }, 10000); // check every 10 seconds
+    // Clear any existing hunger check interval
+    if (this.hungerCheckInterval) {
+      clearInterval(this.hungerCheckInterval);
+    }
+
+    // Re-enable hunger checking to see if the behavior changed
+    this.hungerCheckInterval = setInterval(async () => {
+      try {
+        this.logger.info(`Checking hunger...`);
+        await this.behaviors.eat.checkHunger(); // await to catch any async errors
+      } catch (err) {
+        this.logger.error(`Error in checkHunger: ${err.message}`);
+      }
+    }, 10000);
 
     // if you want an API to toggle behaviors later:
     // this.enableBehavior('look');
@@ -111,13 +129,24 @@ export default class BotController {
   onEnd() {
     this.logger.warn(`${chalk.green(this.username)} has been logged out of the server`)
     this.logger.warn(`Attempting to reconnect in 10sec`)
-    if (this.bot) {
-      this.bot.removeAllListeners();
-      this.bot = null
+
+    // Clear the hunger check interval
+    if (this.hungerCheckInterval) {
+      clearInterval(this.hungerCheckInterval);
+      this.hungerCheckInterval = null;
     }
+
+    // Clear behaviors to prevent references to old bot instance
+    this.behaviors = {};
+
+    // Don't remove all listeners as it can cause issues with reconnection
+    // Just set bot to null so a new instance can be created
+    /**
+    this.bot = null;
+
     setTimeout(() => {
       this.start();
-    }, 10000)
+    }, 10000)*/
   }
 
   // optional: behavior registration helpers
