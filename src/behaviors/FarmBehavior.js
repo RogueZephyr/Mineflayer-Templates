@@ -158,7 +158,7 @@ export default class FarmBehavior {
     return false;
   }
 
-  // harvest single block: go, dig, wait
+  // harvest single block: go, dig, replant immediately
   async _harvestBlock(blockPos) {
     const pos = new Vec3(Math.floor(blockPos.x) + 0.5, Math.floor(blockPos.y), Math.floor(blockPos.z) + 0.5);
     try {
@@ -173,7 +173,40 @@ export default class FarmBehavior {
     if (!block) return false;
 
     try {
+      // harvest the crop
       await this.bot.dig(block);
+      await new Promise(r => setTimeout(r, 150));
+
+      // immediately replant if we have seeds
+      const seed = this.bot.inventory.items().find(it => it && it.name && (it.name.includes('seeds') || it.name.includes('wheat_seeds') || it.name.includes('carrot') || it.name.includes('potato')));
+      if (seed) {
+        // get the farmland block below where we just harvested
+        const farmlandBlock = this.bot.blockAt(new Vec3(Math.floor(blockPos.x), Math.floor(blockPos.y) - 1, Math.floor(blockPos.z)));
+        if (farmlandBlock && farmlandBlock.name && farmlandBlock.name.includes('farmland')) {
+          try {
+            // ensure seed is equipped (might be in off-hand already)
+            const equippedHand = this.bot.heldItem;
+            const equippedOffHand = this.bot.inventory.slots[45]; // off-hand slot
+            
+            if (!equippedHand || !equippedHand.name.includes('seeds') && !equippedHand.name.includes('carrot') && !equippedHand.name.includes('potato')) {
+              // if seed isn't in main hand, equip it temporarily
+              await this.bot.equip(seed, 'hand');
+            }
+            
+            await this.bot.placeBlock(farmlandBlock, new Vec3(0, 1, 0));
+            this._emitDebug('Replanted at', blockPos);
+            
+            // re-equip hoe if we switched away from it
+            const hoe = this.bot.inventory.items().find(i => i && i.name && i.name.includes('_hoe'));
+            if (hoe && (!equippedHand || !equippedHand.name.includes('_hoe'))) {
+              await this.bot.equip(hoe, 'hand');
+            }
+          } catch (e) {
+            this._emitDebug('Failed to replant at', blockPos, e.message || e);
+          }
+        }
+      }
+      
       return true;
     } catch (e) {
       this._emitDebug('dig failed at', blockPos, e.message || e);
@@ -248,6 +281,20 @@ export default class FarmBehavior {
     }
 
     return { harvest, sow };
+  }
+
+  // equip hoe in main hand and seeds in off-hand for efficient farming
+  async _equipFarmingTools() {
+    try {
+      // equip hoe in main hand
+      const hoe = this.bot.inventory.items().find(i => i && i.name && i.name.includes('_hoe'));
+      if (hoe) {
+        await this.bot.equip(hoe, 'hand');
+        this._emitDebug('Equipped hoe in main hand');
+      }
+    } catch (e) {
+      this._emitDebug('Failed to equip farming tools:', e.message || e);
+    }
   }
 
   // getHoe - simplified: check inventory or tools chest using chestRegistry open container
@@ -350,10 +397,13 @@ export default class FarmBehavior {
           return;
         }
 
+        // equip hoe in main hand for harvesting
+        await this._equipFarmingTools();
+
         // do harvesting then sowing pass using a local scan like official script
         let didWork = false;
 
-        // harvest pass
+        // harvest pass - _harvestBlock now replants immediately after harvesting
         while (true) {
           const { harvest } = this._scanArea(area);
           if (!harvest || harvest.length === 0) break;
@@ -362,20 +412,22 @@ export default class FarmBehavior {
           const toHarvest = harvest.shift();
           await this._harvestBlock(toHarvest);
           // small delay between actions
-          await new Promise(r => setTimeout(r, 200));
+          await new Promise(r => setTimeout(r, 250));
         }
 
-        // sow pass
-        while (true) {
-          const { sow } = this._scanArea(area);
-          if (!sow || sow.length === 0) break;
+        // manual sow pass for any remaining empty farmland
+        const { sow } = this._scanArea(area);
+        if (sow && sow.length > 0) {
           // ensure seeds exist before trying to plant
           const seed = this.bot.inventory.items().find(it => it && it.name && (it.name.includes('seeds') || it.name.includes('wheat_seeds') || it.name.includes('carrot') || it.name.includes('potato')));
-          if (!seed) break;
-          didWork = true;
-          const toSow = sow.shift();
-          await this._sowAt(toSow);
-          await new Promise(r => setTimeout(r, 200));
+          if (seed) {
+            this._emitDebug(`Found ${sow.length} empty farmland spots to plant`);
+            for (const toSow of sow) {
+              didWork = true;
+              await this._sowAt(toSow);
+              await new Promise(r => setTimeout(r, 200));
+            }
+          }
         }
 
         // proactive deposit if inventory large or if we did any work and want to keep inventory tidy
@@ -405,16 +457,61 @@ export default class FarmBehavior {
     } catch (err) {
       this.logger.error(`[Farm] Error while farming: ${err.message || err}`);
     } finally {
+      // return hoe to tools chest when done
+      await this.returnHoeToChest();
       this.isWorking = false;
     }
   }
 
   _shouldDeposit() {
     try {
-      const total = this.bot.inventory.items().reduce((s, it) => s + (it.count || 0), 0);
+      // count only crops (wheat, carrots, potatoes) not tools or seeds
+      const cropItems = this.bot.inventory.items().filter(it => {
+        const name = it.name || '';
+        return name.includes('wheat') && !name.includes('seeds') || 
+               name.includes('carrot') || 
+               name.includes('potato') && !name.includes('seeds');
+      });
+      const total = cropItems.reduce((s, it) => s + (it.count || 0), 0);
       return total > 50;
     } catch (e) {
       return false;
+    }
+  }
+
+  // return hoe to tools chest when farming is disabled or complete
+  async returnHoeToChest() {
+    const hoe = this.bot.inventory.items().find(i => i && i.name && i.name.includes('_hoe'));
+    if (!hoe) return;
+
+    const chestEntry = await this.bot.chestRegistry?.getChest('tools').catch(() => null);
+    if (!chestEntry) {
+      this._emitDebug('returnHoe: no tools chest registered');
+      return;
+    }
+
+    try {
+      await this._gotoBlock(new Vec3(chestEntry.x + 0.5, chestEntry.y, chestEntry.z + 0.5), 30000);
+      
+      let container = null;
+      if (this.bot.depositBehavior && typeof this.bot.depositBehavior.openChestSafe === 'function') {
+        container = await this.bot.depositBehavior.openChestSafe(this.bot.blockAt(new Vec3(chestEntry.x, chestEntry.y, chestEntry.z)));
+      } else if (typeof this.bot.openContainer === 'function') {
+        container = await this.bot.openContainer(this.bot.blockAt(new Vec3(chestEntry.x, chestEntry.y, chestEntry.z)));
+      } else if (typeof this.bot.openChest === 'function') {
+        container = await this.bot.openChest(this.bot.blockAt(new Vec3(chestEntry.x, chestEntry.y, chestEntry.z)));
+      }
+
+      if (container) {
+        await new Promise(r => setTimeout(r, 250));
+        if (typeof container.deposit === 'function') {
+          await container.deposit(hoe.type, null, hoe.count);
+          this._emitDebug('Returned hoe to tools chest');
+        }
+        if (typeof container.close === 'function') container.close();
+      }
+    } catch (e) {
+      this._emitDebug('Failed to return hoe to chest:', e.message || e);
     }
   }
 }

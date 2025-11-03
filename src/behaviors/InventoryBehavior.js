@@ -85,6 +85,21 @@ export default class InventoryBehavior {
 
     switch(type.toLowerCase()) {
         case 'all':
+        // drop everything in inventory including armor and off-hand
+        itemsToDrop = this.bot.inventory.items();
+        // also unequip armor
+        try {
+          const armorSlots = ['head', 'torso', 'legs', 'feet', 'off-hand'];
+          for (const slot of armorSlots) {
+            const equipped = this.bot.inventory.slots[this.bot.getEquipmentDestSlot(slot)];
+            if (equipped) {
+              await this.bot.unequip(slot);
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`[Inventory] Failed to unequip armor: ${err}`);
+        }
+        // refresh item list after unequipping
         itemsToDrop = this.bot.inventory.items();
         break;
         case 'wood':

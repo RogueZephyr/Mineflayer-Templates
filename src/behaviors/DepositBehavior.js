@@ -158,9 +158,30 @@ export default class DepositBehavior {
       return;
     }
 
+    // filter out items we want to keep (tools, seeds for farming)
+    const itemsToDeposit = invItems.filter(it => {
+      const name = it.name || '';
+      // keep hoes for farming (don't deposit tools)
+      if (name.includes('_hoe')) return false;
+      // keep a stack of seeds for replanting
+      if (name.includes('seeds') || name.includes('wheat_seeds') || name.includes('carrot') || name.includes('potato')) {
+        // keep up to 64 seeds, deposit excess
+        const seedCount = this.bot.inventory.items()
+          .filter(i => i && (i.name.includes('seeds') || i.name.includes('wheat_seeds') || i.name.includes('carrot') || i.name.includes('potato')))
+          .reduce((sum, i) => sum + i.count, 0);
+        return seedCount > 64;
+      }
+      return true;
+    });
+
+    if (!itemsToDeposit.length) {
+      this.logger.info('[Deposit] Nothing to deposit (keeping tools and seeds)');
+      return;
+    }
+
     // group items by category
     const groups = {};
-    for (const it of invItems) {
+    for (const it of itemsToDeposit) {
       const category = this._findCategoryForItem(it.name);
       groups[category] = groups[category] || [];
       groups[category].push(it);
