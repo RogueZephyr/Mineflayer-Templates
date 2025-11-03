@@ -10,7 +10,7 @@ export default class EatBehavior {
     this.bot = bot;
     this.logger = logger;
     this.master = master;
-    this.hungerThreshold = 15;
+    this.hungerThreshold = 16;
 
     // ====== NEW: Add enable/disable flag ======
     this.enabled = true;

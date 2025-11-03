@@ -14,8 +14,16 @@
     },
     "eat": {
       "minFood": 16
+    },
+    "farming": {
+        "enabled": true,
+        "scanInterval": 1000,
+        "crops": [
+            "wheat",
+            "carrots",
+            "potatoes"
+        ]
     }
-    
   },
   "dashboard": { "enabled": true, "port": 3000 }
 }

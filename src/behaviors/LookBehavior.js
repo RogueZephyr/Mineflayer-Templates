@@ -1,6 +1,7 @@
 // src/behaviors/LookBehavior.js
 import Logger from '../utils/logger.js';
 import chalk from 'chalk';
+import { Vec3 } from 'vec3';
 
 const logger = new Logger();
 const lookLabel = chalk.green('[LookBehavior]');
@@ -8,46 +9,51 @@ const lookLabel = chalk.green('[LookBehavior]');
 export default class LookBehavior {
   constructor(bot, config = {}) {
     this.bot = bot;
-    this.enabled = true;
-    this.currentTarget = null;
-    this.config = {
-      updateInterval: config.updateInterval || 100,
-      maxDistance: config.maxDistance || 6
-    };
-
-    // Bind event listeners
-    this.onEntitySpawn = this.onEntitySpawn.bind(this);
-    this.onEntityGone = this.onEntityGone.bind(this);
-    this.updateLookTarget = this.updateLookTarget.bind(this);
-
-    this.bot.on('path_update', (r) => {
-      if (r.status === 'success' || r.status === 'incomplete') {
-        this.disable();
-      }
-    });
-
-    this.bot.on('goal_reached', () => {
-        this.enable();
-    });
-
-    this.bot.on('entitySpawn', this.onEntitySpawn);
-    this.bot.on('entityGone', this.onEntityGone);
-
-    // Start continuous look updates using physics tick for smoother movement
-    this.bot.on('physicsTick', this.updateLookTarget);
+    this.enabled = false;
+    this.paused = false;  // New flag for temporary suspension
+    this.config = config;
+    this.lookInterval = null;
   }
 
   enable() {
     this.enabled = true;
-    this.bot.on('physicsTick', this.updateLookTarget);
-    logger.info(`${lookLabel} Enabled`);
+    if (!this.paused) {
+      this._startLooking();
+    }
   }
 
   disable() {
     this.enabled = false;
-    this.currentTarget = null;
-    this.bot.removeListener('physicsTick', this.updateLookTarget);
-    logger.info(`${lookLabel} Disabled`);
+    this._stopLooking();
+  }
+
+  // New methods to support temporary suspension
+  pause() {
+    this.paused = true;
+    this._stopLooking();
+  }
+
+  resume() {
+    this.paused = false;
+    if (this.enabled) {
+      this._startLooking();
+    }
+  }
+
+  _stopLooking() {
+    if (this.lookInterval) {
+      clearInterval(this.lookInterval);
+      this.lookInterval = null;
+    }
+  }
+
+  _startLooking() {
+    if (this.lookInterval) return;
+    
+    this.lookInterval = setInterval(() => {
+      if (!this.enabled || this.paused) return;
+      this.updateLookTarget();
+    }, this.config.interval || 5000);
   }
 
   onEntitySpawn(entity) {

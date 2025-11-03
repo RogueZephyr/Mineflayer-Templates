@@ -1,62 +1,92 @@
 // src/utils/SaveChestLocation.js
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
-import chalk from 'chalk';
-import Logger from './logger.js';
-
-const chestFilePath = path.resolve('src/config/chestLocations.json');
 
 export default class SaveChestLocation {
   constructor(bot) {
     this.bot = bot;
-    this.logger = new Logger();
-    this.chestData = this.loadChests();
+    // use data/ for runtime state so file-watcher won't restart the process on updates
+    this.srcPath = path.join(process.cwd(), 'src', 'config', 'chestLocations.json');
+    this.dataPath = path.join(process.cwd(), 'data', 'chestLocations.json');
+    this.filePath = this.dataPath;
   }
 
-  loadChests() {
+  async _ensureDataFile() {
     try {
-      if (!fs.existsSync(chestFilePath)) {
-        fs.writeFileSync(chestFilePath, JSON.stringify({}, null, 2));
+      await fs.access(this.dataPath);
+      return;
+    } catch (e) {
+      // migrate from src/config if present, otherwise create an empty file
+      try {
+        const raw = await fs.readFile(this.srcPath, 'utf8');
+        await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
+        await fs.writeFile(this.dataPath, raw, 'utf8');
+        return;
+      } catch (err) {
+        await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
+        await fs.writeFile(this.dataPath, JSON.stringify({}, null, 2) + '\n', 'utf8');
       }
-      const data = fs.readFileSync(chestFilePath, 'utf-8');
-      return JSON.parse(data);
-    } catch (err) {
-      this.logger.error(`Failed to load chest locations: ${err}`);
+    }
+  }
+
+  // Accept Vec3 (with floored) or plain {x,y,z}
+  _normalizePos(pos) {
+    if (!pos) throw new Error('No position provided');
+    if (typeof pos.floored === 'function') {
+      const f = pos.floored();
+      return { x: Math.floor(f.x), y: Math.floor(f.y), z: Math.floor(f.z) };
+    }
+    if (
+      typeof pos.x === 'number' &&
+      typeof pos.y === 'number' &&
+      typeof pos.z === 'number'
+    ) {
+      return { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) };
+    }
+    throw new Error('Invalid position object');
+  }
+
+  async _readAll() {
+    await this._ensureDataFile();
+    try {
+      const raw = await fs.readFile(this.filePath, 'utf8');
+      return JSON.parse(raw);
+    } catch {
       return {};
     }
   }
 
-  saveChests() {
+  async _writeAll(data) {
+    const body = JSON.stringify(data, null, 2) + '\n';
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    await fs.writeFile(this.filePath, body, 'utf8');
+  }
+
+  // set or update a chest location then persist to disk
+  async setChest(category, pos) {
+    if (!category) throw new Error('Category required');
+    const p = this._normalizePos(pos);
+    const all = await this._readAll();
+    all[category] = { x: p.x, y: p.y, z: p.z };
+    await this._writeAll(all);
+    return all[category];
+  }
+
+  async getChest(category) {
+    const all = await this._readAll();
+    return all[category] || null;
+  }
+
+  async getAll() {
+    return await this._readAll();
+  }
+
+  async getDiagnostics() {
     try {
-      fs.writeFileSync(chestFilePath, JSON.stringify(this.chestData, null, 2));
-      this.logger.info(`${chalk.green('[ChestRegistry]')} Chest data saved successfully.`);
-    } catch (err) {
-      this.logger.error(`Error saving chest data: ${err}`);
+      const all = await this._readAll();
+      return { filePath: this.filePath, entries: Object.keys(all || {}).length, entriesDetail: Object.keys(all || {}) };
+    } catch (e) {
+      return { error: String(e) };
     }
-  }
-
-  setChest(category, position) {
-    this.chestData[category] = position;
-    this.saveChests();
-  }
-
-  getChest(category) {
-    return this.chestData[category] || null;
-  }
-
-  findNearestChest(maxDistance = 6) {
-    const chests = Object.entries(this.chestData);
-    let nearest = null;
-    let minDist = Infinity;
-
-    for (const [category, pos] of chests) {
-      const distance = this.bot.entity.position.distanceTo(pos);
-      if (distance < minDist && distance <= maxDistance) {
-        minDist = distance;
-        nearest = { category, pos };
-      }
-    }
-
-    return nearest;
   }
 }
