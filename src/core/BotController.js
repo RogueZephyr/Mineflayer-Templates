@@ -7,14 +7,30 @@ import figlet from 'figlet';
 
 import LookBehavior from '../behaviors/LookBehavior.js';
 import Logger from '../utils/logger.js';
+import ChatLogger from '../behaviors/ChatLogger.js'
+import ChatCommandHandler from '../utils/ChatCommandHandler.js';
 
 export default class BotController {
-  constructor(config) {
+  static usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t']
+  static usedNames = new Set()
+
+  constructor(config, username = null) {
+    this.username = username || this.getAvailableUsername();
     this.config = config;
     this.bot = null;
     this.mcData = null;
     this.logger = new Logger();
     this.behaviors = {};
+    this.master = 'RogueZ3phyr';
+  }
+
+  getAvailableUsername() {
+    for (const name of BotController.usernameList) {
+      if (!BotController.usedNames.has(name)) {
+        BotController.usedNames.add(name);
+        return name;
+      }
+    }
   }
 
   start() {
@@ -22,7 +38,7 @@ export default class BotController {
     this.bot = mineflayer.createBot({
       host: this.config.host,
       port: this.config.port,
-      username: this.config.username,
+      username: this.username,
       version: this.config.version || 'auto'
     });
 
@@ -35,7 +51,7 @@ export default class BotController {
 
     // global error handling
     this.bot.on('kicked', (reason) => this.logger.warn(`Kicked: ${reason}`));
-    this.bot.on('end', () => this.logger.warn('Connection ended'));
+    this.bot.on('end', () => {this.logger.warn('Connection ended'); this.onEnd();});
     this.bot.on('error', (err) => this.logger.error(`Bot error: ${err}`));
   }
 
@@ -46,7 +62,6 @@ export default class BotController {
   }
 
   onSpawn() {
-    console.clear();
     console.log(chalk.cyan(figlet.textSync('MineBot', { horizontalLayout: 'full' })));
     this.logger.info(`Connected to ${this.config.host}:${this.config.port}`);
     this.logger.success('Spawn event detected, initializing data...');
@@ -54,14 +69,35 @@ export default class BotController {
     // load minecraft-data now that bot.version is available
     this.mcData = mcDataLoader(this.bot.version);
 
-    this.bot.chat('Hello! Test environment loaded!');
+    this.logger.info(`${chalk.green(this.username)} has loaded correctly`)
+    this.bot.chat(`/msg ${this.master} Hello! Test environment loaded!`);
 
     // initialize and register behaviors
-    this.behaviors.look = new LookBehavior(this.bot);
+    const lookConfig = this.config.behaviors?.look || {};
+    this.behaviors.look = new LookBehavior(this.bot, lookConfig);
     this.logger.info('LookBehavior initialized successfully!');
+
+    this.behaviors.chatLogger = new ChatLogger(this.bot, this.logger, BotController.usernameList)
+    this.behaviors.chatLogger.enable()
+    this.logger.info('ChatLogger initialized successfully!')
+
+    this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master);
+    this.logger.info('ChatCommandHandler initialized successfully!');
 
     // if you want an API to toggle behaviors later:
     // this.enableBehavior('look');
+  }
+
+  onEnd() {
+    this.logger.warn(`${chalk.green(this.username)} has been logged out of the server`)
+    this.logger.warn(`Attempting to reconnect in 10sec`)
+    if (this.bot) {
+      this.bot.removeAllListeners();
+      this.bot = null
+    }
+    setTimeout(() => {
+      this.start();
+    }, 10000)
   }
 
   // optional: behavior registration helpers
