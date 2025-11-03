@@ -178,7 +178,17 @@ export default class FarmBehavior {
       await new Promise(r => setTimeout(r, 150));
 
       // immediately replant if we have seeds
-      const seed = this.bot.inventory.items().find(it => it && it.name && (it.name.includes('seeds') || it.name.includes('wheat_seeds') || it.name.includes('carrot') || it.name.includes('potato')));
+      const seed = this.bot.inventory.items().find(it => {
+        if (!it || !it.name) return false;
+        // Match only plantable items (seeds, carrot, potato - but NOT poisonous_potato)
+        return it.name.endsWith('_seeds') || 
+               it.name === 'wheat_seeds' || 
+               it.name === 'carrot' || 
+               it.name === 'potato' ||
+               it.name === 'beetroot_seeds' ||
+               it.name === 'melon_seeds' ||
+               it.name === 'pumpkin_seeds';
+      });
       if (seed) {
         // get the farmland block below where we just harvested
         const farmlandBlock = this.bot.blockAt(new Vec3(Math.floor(blockPos.x), Math.floor(blockPos.y) - 1, Math.floor(blockPos.z)));
@@ -188,7 +198,14 @@ export default class FarmBehavior {
             const equippedHand = this.bot.heldItem;
             const equippedOffHand = this.bot.inventory.slots[45]; // off-hand slot
             
-            if (!equippedHand || !equippedHand.name.includes('seeds') && !equippedHand.name.includes('carrot') && !equippedHand.name.includes('potato')) {
+            const isPlantableEquipped = equippedHand && (
+              equippedHand.name.endsWith('_seeds') || 
+              equippedHand.name === 'wheat_seeds' ||
+              equippedHand.name === 'carrot' || 
+              equippedHand.name === 'potato'
+            );
+            
+            if (!isPlantableEquipped) {
               // if seed isn't in main hand, equip it temporarily
               await this.bot.equip(seed, 'hand');
             }
@@ -225,7 +242,17 @@ export default class FarmBehavior {
     }
 
     // find seed in inventory
-    const seed = this.bot.inventory.items().find(it => it && it.name && (it.name.includes('seeds') || it.name.includes('wheat_seeds') || it.name.includes('carrot') || it.name.includes('potato')));
+    const seed = this.bot.inventory.items().find(it => {
+      if (!it || !it.name) return false;
+      // Match only plantable items (seeds, carrot, potato - but NOT poisonous_potato)
+      return it.name.endsWith('_seeds') || 
+             it.name === 'wheat_seeds' || 
+             it.name === 'carrot' || 
+             it.name === 'potato' ||
+             it.name === 'beetroot_seeds' ||
+             it.name === 'melon_seeds' ||
+             it.name === 'pumpkin_seeds';
+    });
     if (!seed) {
       this._emitDebug('No seeds to sow');
       return false;
@@ -281,6 +308,61 @@ export default class FarmBehavior {
     }
 
     return { harvest, sow };
+  }
+
+  // equip hoe in main hand and seeds in off-hand for efficient farming
+  // collect dropped items in the farming area to prevent lag
+  async _collectDroppedItems(area) {
+    if (!area || !area.start || !area.end) return 0;
+    if (!this.bot.entity || !this.bot.entity.position) return 0;
+
+    const startX = Math.min(area.start.x, area.end.x);
+    const endX = Math.max(area.start.x, area.end.x);
+    const startY = Math.min(area.start.y || 60, area.end.y || 70);
+    const endY = Math.max(area.start.y || 60, area.end.y || 70);
+    const startZ = Math.min(area.start.z, area.end.z);
+    const endZ = Math.max(area.start.z, area.end.z);
+
+    // find all dropped items within the farming area
+    const droppedItems = Object.values(this.bot.entities).filter(entity => {
+      if (!entity || entity.type !== 'object' || entity.name !== 'item') return false;
+      if (!entity.position) return false;
+      
+      const pos = entity.position;
+      return pos.x >= startX && pos.x <= endX &&
+             pos.y >= startY - 2 && pos.y <= endY + 2 &&
+             pos.z >= startZ && pos.z <= endZ;
+    });
+
+    if (droppedItems.length === 0) return 0;
+
+    this._emitDebug(`Found ${droppedItems.length} dropped items in farming area`);
+    let collected = 0;
+
+    // collect each dropped item
+    for (const itemEntity of droppedItems) {
+      if (!this.enabled || !this.isWorking) break;
+      
+      try {
+        // check if item still exists (might have been picked up or despawned)
+        if (!this.bot.entities[itemEntity.id]) continue;
+        
+        const itemPos = itemEntity.position;
+        await this._gotoBlock(itemPos, 10000);
+        
+        // wait a bit for auto-pickup to happen
+        await new Promise(r => setTimeout(r, 500));
+        collected++;
+      } catch (e) {
+        this._emitDebug('Failed to collect item:', e.message || e);
+      }
+    }
+
+    if (collected > 0) {
+      this._emitDebug(`Collected ${collected} dropped items`);
+    }
+
+    return collected;
   }
 
   // equip hoe in main hand and seeds in off-hand for efficient farming
@@ -428,6 +510,13 @@ export default class FarmBehavior {
               await new Promise(r => setTimeout(r, 200));
             }
           }
+        }
+
+        // collect dropped items in the area to prevent lag
+        try {
+          await this._collectDroppedItems(area);
+        } catch (e) {
+          this._emitDebug('startFarming: collectDroppedItems failed', e.message || e);
         }
 
         // proactive deposit if inventory large or if we did any work and want to keep inventory tidy

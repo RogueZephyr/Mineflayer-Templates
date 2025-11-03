@@ -16,6 +16,7 @@ import DepositBehavior from '../behaviors/DepositBehavior.js';
 import FarmBehavior from '../behaviors/FarmBehavior.js';
 import SaveChestLocation from '../utils/SaveChestLocation.js';
 import DebugTools from '../utils/DebugTools.js';
+import AreaRegistry from '../state/AreaRegistry.js';
 
 export default class BotController {
   static usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t']
@@ -117,6 +118,9 @@ export default class BotController {
     // create shared helpers early so behaviors can use them
     this.chestRegistry = new SaveChestLocation(this.bot);
     this.bot.chestRegistry = this.chestRegistry;
+
+    this.areaRegistry = new AreaRegistry(this.bot);
+    this.bot.areaRegistry = this.areaRegistry;
 
     this.behaviors.deposit = new DepositBehavior(this.bot, this.logger);
     this.bot.depositBehavior = this.behaviors.deposit;

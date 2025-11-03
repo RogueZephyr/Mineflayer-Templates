@@ -32,8 +32,8 @@ npm install
 
 3. Set farming area (stand at corners):
    ```
-   !setarea start    # First corner
-   !setarea end      # Opposite corner
+   !setarea farm start    # First corner
+   !setarea farm end      # Opposite corner
    ```
 
 ## Running the Bot
@@ -69,10 +69,15 @@ npm run dev
 - `!deposit [category]` - Deposit items by category
 - `!depositall` - Deposit all items to categorized chests
 
+### Area Management
+- `!setarea <type> start [x y z]` - Set start corner (stand at position or provide coords)
+- `!setarea <type> end [x y z]` - Set end corner
+- `!setarea <type> clear` - Clear saved area
+- Area types: `farm`, `quarry`, `lumber` (more coming soon)
+
 ### Farming
 - `!farm start` - Begin automated farming
 - `!farm stop` - Stop farming
-- `!setarea start|end` - Set farming boundaries
 
 ### Movement
 - `!come` - Come to your position

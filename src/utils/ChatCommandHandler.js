@@ -6,6 +6,7 @@ import * as PathfinderBehaviorModule from '../behaviors/PathfinderBehavior.js';
 import SaveChestLocation from './SaveChestLocation.js';
 import DepositBehavior from '../behaviors/DepositBehavior.js';
 import DebugTools from './DebugTools.js';
+import AreaRegistry from '../state/AreaRegistry.js';
 
 const cmdPrefix = '!';
 
@@ -33,8 +34,12 @@ export default class ChatCommandHandler {
     this.depositBehavior = this.bot.depositBehavior || new DepositBehavior(this.bot, this.logger);
     this.bot.depositBehavior = this.depositBehavior;
 
+    // Area registry for modular area management
+    this.areaRegistry = this.bot.areaRegistry || new AreaRegistry(this.bot);
+    this.bot.areaRegistry = this.areaRegistry;
+
     // Debug tools (expose for runtime inspection)
-    this.debug = new DebugTools(this.bot, this.logger, this.behaviors, { chestRegistry: this.chestRegistry, depositBehavior: this.depositBehavior });
+    this.debug = new DebugTools(this.bot, this.logger, this.behaviors, { chestRegistry: this.chestRegistry, depositBehavior: this.depositBehavior, areaRegistry: this.areaRegistry });
     this.bot.debugTools = this.debug;
     
     // Init everything
@@ -315,6 +320,80 @@ export default class ChatCommandHandler {
       }
     });
 
+    // 📐 Set Area (modular for farm, quarry, lumber, etc.)
+    this.register('setarea', async (username, args) => {
+      if (!this.bot.areaRegistry) {
+        this.bot.chat("Area registry not available");
+        return;
+      }
+
+      if (args.length < 2) {
+        this.bot.chat("Usage: !setarea <type> <start|end|clear> [x y z]");
+        this.bot.chat("Types: farm, quarry, lumber");
+        this.bot.chat("Example: !setarea farm start");
+        return;
+      }
+
+      const type = args[0].toLowerCase();
+      const action = args[1].toLowerCase();
+
+      if (action === 'clear') {
+        try {
+          await this.bot.areaRegistry.deleteArea(type);
+          this.bot.chat(`Cleared ${type} area`);
+          // Also clear behavior-specific cache if present
+          if (type === 'farm' && this.behaviors.farm) {
+            this.behaviors.farm.farmingArea = null;
+          }
+        } catch (e) {
+          this.bot.chat(`Failed to clear area: ${e.message}`);
+        }
+        return;
+      }
+
+      if (!['start', 'end'].includes(action)) {
+        this.bot.chat("Action must be 'start', 'end', or 'clear'");
+        return;
+      }
+
+      let x, y, z;
+      if (args.length >= 5) {
+        // Manual coordinates
+        [x, y, z] = args.slice(2, 5).map(Number);
+        if ([x, y, z].some(n => Number.isNaN(n))) {
+          this.bot.chat('Invalid coordinates');
+          return;
+        }
+      } else {
+        // Use player's position
+        const player = this.bot.players[username];
+        if (!player || !player.entity) {
+          this.bot.chat("Stand at the corner or provide coords: !setarea <type> <start|end> x y z");
+          return;
+        }
+        const pos = player.entity.position;
+        x = pos.x; y = pos.y; z = pos.z;
+      }
+
+      try {
+        const result = await this.bot.areaRegistry.setCorner(type, action, { x, y, z });
+        
+        if (result.completed) {
+          const dims = this.bot.areaRegistry.calculateDimensions(result.area);
+          this.bot.chat(`✅ ${type} area set: ${dims.width}x${dims.height}x${dims.depth} (${dims.volume} blocks)`);
+          
+          // Update behavior-specific cache
+          if (type === 'farm' && this.behaviors.farm) {
+            this.behaviors.farm.farmingArea = result.area;
+          }
+        } else {
+          this.bot.chat(`Set ${type} ${action} corner at (${Math.floor(x)}, ${Math.floor(y)}, ${Math.floor(z)}). Now set the ${action === 'start' ? 'end' : 'start'} corner.`);
+        }
+      } catch (e) {
+        this.bot.chat(`Failed to set area: ${e.message}`);
+      }
+    });
+
     // 🌾 Farming Commands
     this.register('farm', async (username, args) => {
         if (!this.behaviors.farm) {
@@ -326,8 +405,13 @@ export default class ChatCommandHandler {
 
         switch (subCommand) {
             case 'start':
+                // Load area from registry if not cached
+                if (!this.behaviors.farm.farmingArea && this.bot.areaRegistry) {
+                  this.behaviors.farm.farmingArea = await this.bot.areaRegistry.getArea('farm');
+                }
+                
                 if (!this.behaviors.farm.farmingArea) {
-                    this.bot.chat("No farming area set! Use !farm setarea first");
+                    this.bot.chat("No farming area set! Use !setarea farm start/end");
                     return;
                 }
                 // ensure behavior is enabled before starting
@@ -343,22 +427,9 @@ export default class ChatCommandHandler {
                 this.bot.chat("Stopped farming");
                 break;
 
-            case 'setarea':
-                // Get player's position and create a 5x5 area around it
-                const player = this.bot.players[username];
-                if (!player) {
-                    this.bot.chat("Couldn't find player position!");
-                    return;
-                }
-                this.behaviors.farm.farmingArea = {
-                    start: { x: Math.floor(player.entity.position.x - 4), z: Math.floor(player.entity.position.z - 4) },
-                    end: { x: Math.floor(player.entity.position.x + 4), z: Math.floor(player.entity.position.z + 4) }
-                };
-                this.bot.chat(`Set farming area around ${JSON.stringify(this.behaviors.farm.farmingArea)}`);
-                break;
-
             default:
-                this.bot.chat("Usage: !farm <start|stop|setarea>");
+                this.bot.chat("Usage: !farm <start|stop>");
+                this.bot.chat("Set area first: !setarea farm start, then !setarea farm end");
         }
     });
 
