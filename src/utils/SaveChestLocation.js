@@ -32,10 +32,7 @@ export default class SaveChestLocation {
   // Accept Vec3 (with floored) or plain {x,y,z}
   _normalizePos(pos) {
     if (!pos) throw new Error('No position provided');
-    if (typeof pos.floored === 'function') {
-      const f = pos.floored();
-      return { x: Math.floor(f.x), y: Math.floor(f.y), z: Math.floor(f.z) };
-    }
+    // prefer explicit numeric coordinates (Vec3 also exposes x,y,z)
     if (
       typeof pos.x === 'number' &&
       typeof pos.y === 'number' &&
@@ -43,6 +40,21 @@ export default class SaveChestLocation {
     ) {
       return { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) };
     }
+
+    // array-like [x,y,z]
+    if (Array.isArray(pos) && pos.length >= 3) {
+      return { x: Math.floor(Number(pos[0])), y: Math.floor(Number(pos[1])), z: Math.floor(Number(pos[2])) };
+    }
+
+    // fallback: try to coerce from object-like with numeric-ish properties
+    if (pos && (typeof pos.x !== 'undefined' || typeof pos[0] !== 'undefined')) {
+      return {
+        x: Math.floor(Number(pos.x ?? pos[0] ?? 0)),
+        y: Math.floor(Number(pos.y ?? pos[1] ?? 0)),
+        z: Math.floor(Number(pos.z ?? pos[2] ?? 0))
+      };
+    }
+
     throw new Error('Invalid position object');
   }
 

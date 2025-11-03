@@ -146,113 +146,101 @@ export default class DepositBehavior {
 
   // depositAll - updated to use _gotoBlock and retry when path blocked
   async depositAll() {
-    this._emitDebug('depositAll called, inventory size', this.bot.inventory.items().length);
-    if (!this.bot.chestRegistry) throw new Error('No chestRegistry available on bot');
-    const items = this.bot.inventory.items();
-    if (!items || items.length === 0) {
-      this.logger && this.logger.info && this.logger.info('[Deposit] Nothing to deposit');
+    this._emitDebug('depositAll called');
+    if (!this.bot.chestRegistry) {
+      this.logger.info('[Deposit] No chestRegistry available on bot');
       return;
     }
 
-    // group by category -> { category: [{ item, count }, ...] }
+    const invItems = this.bot.inventory.items().filter(Boolean);
+    if (!invItems.length) {
+      this.logger.info('[Deposit] Nothing to deposit');
+      return;
+    }
+
+    // group items by category
     const groups = {};
-    for (const it of items) {
-      const name = it.name || '';
-      const category = this._findCategoryForItem(name);
-      if (!groups[category]) groups[category] = [];
+    for (const it of invItems) {
+      const category = this._findCategoryForItem(it.name);
+      groups[category] = groups[category] || [];
       groups[category].push(it);
     }
 
-    // determine chests to use: one per category, prioritized by existing deposits
-    const chestsToUse = [];
-    for (const [category, itemList] of Object.entries(groups)) {
-      const chestEntry = await this.bot.chestRegistry.getChest(category);
-      if (chestEntry) {
-        chestsToUse.push({ category, chestPos: new Vec3(chestEntry.x, chestEntry.y, chestEntry.z), itemList });
-      } else {
-        this.logger && this.logger.info && this.logger.info(`[Deposit] No chest registered for "${category}", skipping.`);
+    for (const [category, items] of Object.entries(groups)) {
+      const chestEntry = await this.bot.chestRegistry.getChest(category).catch(() => null);
+      if (!chestEntry) {
+        this.logger.info(`[Deposit] No chest registered for "${category}", skipping.`);
+        continue;
       }
-    }
 
-    // sort chestsToUse by distance to player (nearest first)
-    chestsToUse.sort((a, b) => {
-      const aDist = this.bot.entity.position.distanceTo(a.chestPos);
-      const bDist = this.bot.entity.position.distanceTo(b.chestPos);
-      return aDist - bDist;
-    });
+      const chestPos = new Vec3(chestEntry.x, chestEntry.y, chestEntry.z);
 
-    for (const { category, chestPos, itemList } of chestsToUse) {
       try {
-        this.logger.info(`[Deposit] Depositing to category ${category} at ${chestPos.x},${chestPos.y},${chestPos.z}`);
-        // try to navigate with retries and searchRadius bump on failure
-        try {
-          await this._gotoBlock(chestPos, 20000, 2);
-        } catch (err) {
-          this.logger.warn(`[Deposit] Direct navigation failed (${err.message}). Increasing searchRadius and retrying.`);
-          // bump search radius and retry once
-          try {
-            if (this.bot.pathfinder && typeof this.bot.pathfinder.searchRadius === 'number') {
-              this.bot.pathfinder.searchRadius = Math.max(this.bot.pathfinder.searchRadius, 128);
-            }
-            // try again using GoalNear
-            await this._gotoBlock(chestPos, 20000, 2.5);
-          } catch (err2) {
-            this.logger.error(`[Deposit] Failed to reach chest after retry: ${err2.message || err2}`);
-            // skip this chest and continue with next category
-            continue;
-          }
-        }
+        await this._gotoBlock(chestPos, 20000, 2);
+      } catch (err) {
+        this.logger.warn(`[Deposit] Cannot reach chest for ${category}: ${err.message || err}`);
+        continue;
+      }
 
-        // fetch chest record (may include block data)
-        const chestRecord = await this.bot.chestRegistry.getChest(category);
-        if (!chestRecord) {
-          this.logger.warn(`[Deposit] No chest found for category ${category}`);
-          continue;
-        }
+      const chestBlock = this.bot.blockAt(chestPos);
+      if (!chestBlock) {
+        this.logger.warn(`[Deposit] No chest block found at saved coords for ${category}`);
+        continue;
+      }
 
-        let chestWindow = null;
-        try {
-          // open chest safely (uses retry/timeout)
-          chestWindow = await this.openChestSafe(chestRecord);
-          // deposit items - rely on existing bot.depositItem API or behavior
-          for (const item of itemList) {
-            try {
-              if (typeof this.bot.depositItem === 'function') {
-                await this.bot.depositItem(item);
-              } else if (chestWindow && typeof chestWindow.deposit === 'function') {
-                // if chest window exposes deposit (some plugins), use it
-                await chestWindow.deposit(item);
-              } else {
-                // best-effort: try bot.deposit with type/count if available
-                if (typeof this.bot.deposit === 'function') {
-                  await this.bot.deposit(item.type, null, item.count);
-                } else {
-                  this.logger && this.logger.warn && this.logger.warn('[Deposit] No supported deposit API available for item', item.name);
-                }
-              }
-            } catch (innerErr) {
-              this.logger && this.logger.warn && this.logger.warn(`[Deposit] Failed to deposit ${item.name}: ${innerErr.message || innerErr}`);
-            }
-          }
-        } catch (err) {
-          this.logger.error(`[Deposit] Failed to open/deposit into chest: ${err.message || err}`);
-        } finally {
-          // attempt to close chest/window if open
-          try {
-            if (chestWindow && typeof chestWindow.close === 'function') {
-              chestWindow.close();
-            } else if (typeof this.bot.closeChest === 'function') {
-              await this.bot.closeChest();
-            } else if (typeof this.bot.closeWindow === 'function') {
-              await this.bot.closeWindow();
-            }
-          } catch (closeErr) {
-            // non-fatal
-          }
+      // open container robustly
+      let container = null;
+      try {
+        if (typeof this.openChestSafe === 'function') {
+          container = await this.openChestSafe(chestBlock);
+        } else if (typeof this.bot.openContainer === 'function') {
+          container = await this.bot.openContainer(chestBlock);
+        } else {
+          container = await this.bot.openChest(chestBlock);
         }
       } catch (e) {
-        this.logger && this.logger.error && this.logger.error(`[Deposit] Unexpected error during deposit for category ${category}: ${e.message || e}`);
+        this.logger.warn(`[Deposit] Failed to open container for ${category}: ${e.message || e}`);
+        if (container && typeof container.close === 'function') try { container.close(); } catch (_) {}
+        continue;
+      }
+
+      // ensure window populated
+      await new Promise(r => setTimeout(r, 250));
+
+      try {
+        // deposit each matching inventory item into the opened container
+        for (const item of items) {
+          // validate item still exists in inventory
+          const cur = this.bot.inventory.items().find(i => i && i.type === item.type);
+          if (!cur) continue;
+
+          const count = cur.count || 1;
+          this._emitDebug(`[Deposit] Depositing ${count}x ${cur.name} -> ${category}`);
+
+          if (container && typeof container.deposit === 'function') {
+            // deposit(type, metadata/null, count)
+            await container.deposit(cur.type, null, count);
+          } else if (typeof this.bot.transfer === 'function' && container && container.window) {
+            // fallback: try bot.transfer (some APIs expose transfer)
+            try {
+              await this.bot.transfer(cur.type, null, count, container.window);
+            } catch (err) {
+              this.logger.warn(`[Deposit] fallback transfer failed for ${cur.name}: ${err.message || err}`);
+            }
+          } else {
+            this.logger.warn('[Deposit] No supported deposit API on container, skipping item', cur.name);
+          }
+
+          // small delay for inventory/container sync
+          await new Promise(r => setTimeout(r, 150));
+        }
+      } catch (err) {
+        this.logger.warn(`[Deposit] Error depositing to ${category}: ${err.message || err}`);
+      } finally {
+        try { if (container && typeof container.close === 'function') container.close(); } catch (_) {}
       }
     }
+
+    this.logger.info('[Deposit] depositAll finished');
   }
 }

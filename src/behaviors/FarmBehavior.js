@@ -46,24 +46,33 @@ export default class FarmBehavior {
   async _gotoBlock(pos, timeoutMs = 30000) {
     if (!pos) throw new Error('_gotoBlock: pos required');
 
-    // normalize pos to Vec3 so .floored() is always present
+    // normalize pos to a Vec3-like object (numeric x,y,z) — avoid calling .floored()
     let v;
     try {
-      if (pos && typeof pos.floored === 'function') {
-        v = pos;
-      } else if (typeof pos.x === 'number' && typeof pos.y === 'number' && typeof pos.z === 'number') {
+      if (pos && typeof pos.x === 'number' && typeof pos.y === 'number' && typeof pos.z === 'number') {
+        // accept Vec3-like objects (this also covers Vec3 instances)
         v = new Vec3(pos.x, pos.y, pos.z);
       } else if (Array.isArray(pos) && pos.length >= 3) {
         v = new Vec3(pos[0], pos[1], pos[2]);
-      } else {
-        // fallback: attempt to coerce whatever was provided
+      } else if (pos && (typeof pos.x !== 'undefined' || typeof pos[0] !== 'undefined')) {
+        // try best-effort coercion from objects or array-like
         v = new Vec3(Number(pos.x ?? pos[0] ?? 0), Number(pos.y ?? pos[1] ?? 0), Number(pos.z ?? pos[2] ?? 0));
+      } else {
+        // not coercible — log and fallback to origin to avoid throwing unexpected errors
+        this._emitDebug('_gotoBlock: received uncoercible pos', pos);
+        v = new Vec3(0, 0, 0);
       }
     } catch (e) {
+      this._emitDebug('_gotoBlock: coercion error', e && e.stack ? e.stack : String(e));
       v = new Vec3(0, 0, 0);
     }
 
-    const floored = v.floored ? v.floored() : new Vec3(Math.floor(v.x), Math.floor(v.y), Math.floor(v.z));
+    // compute integer coords without calling .floored() to avoid runtime errors
+    const floored = new Vec3(
+      Math.floor(Number(v.x || 0)),
+      Math.floor(Number(v.y || 0)),
+      Math.floor(Number(v.z || 0))
+    );
     const gx = floored.x;
     const gy = floored.y;
     const gz = floored.z;
@@ -159,7 +168,8 @@ export default class FarmBehavior {
       return false;
     }
 
-    const block = this.bot.blockAt(blockPos);
+    // ensure we pass a Vec3 to bot.blockAt() (some mineflayer versions expect a Vec3-like object)
+    const block = this.bot.blockAt(new Vec3(Math.floor(blockPos.x), Math.floor(blockPos.y), Math.floor(blockPos.z)));
     if (!block) return false;
 
     try {
@@ -190,7 +200,8 @@ export default class FarmBehavior {
 
     try {
       await this.bot.equip(seed, 'hand');
-      const blockBelow = this.bot.blockAt(farmlandPos);
+  // ensure we pass a Vec3 to bot.blockAt()
+  const blockBelow = this.bot.blockAt(new Vec3(Math.floor(farmlandPos.x), Math.floor(farmlandPos.y), Math.floor(farmlandPos.z)));
       if (!blockBelow) return false;
       await this.bot.placeBlock(blockBelow, new Vec3(0, 1, 0));
       return true;

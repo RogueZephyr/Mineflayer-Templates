@@ -230,7 +230,7 @@ export default class InventoryBehavior {
             const defaultMovements = new Movements(this.bot, mcData);
             this.bot.pathfinder.setMovements(defaultMovements);
 
-            // Ensure we have a Vec3 point (findBlock expects a Vec3 with .floored())
+            // Ensure we have a Vec3-like point (object with numeric x,y,z)
             const Vec3Module = await import('vec3').then(m => m.default || m);
             const point = new Vec3Module(Math.floor(chestPos.x), Math.floor(chestPos.y), Math.floor(chestPos.z));
 
