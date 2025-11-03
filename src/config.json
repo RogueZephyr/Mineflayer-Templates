@@ -1,0 +1,9 @@
+{
+  "host": "xxrp-smp.modrinth.gg",
+  "port": 25565,
+  "username": "TestBot",
+  "version": "1.21.1",
+  "debug": true,
+  "enabledBehaviors": ["look"],
+  "dashboard": { "enabled": true, "port": 3000 }
+}
