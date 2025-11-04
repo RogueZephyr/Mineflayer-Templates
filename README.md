@@ -1,4 +1,4 @@
-# � Mineflayer BasicBot - Multi-Bot Automation System
+# Mineflayer BasicBot - Multi-Bot Automation System
 
 A **fully-featured, modular Minecraft bot** built with **Mineflayer** and **modern ES Modules (ESM)**.  
 Features multi-bot coordination, whitelist permissions, graceful shutdown, farming automation, and intelligent pathfinding.
