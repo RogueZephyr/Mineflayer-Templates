@@ -40,10 +40,23 @@ export default class DebugTools {
   log(moduleName, ...args) {
     if (!this.isEnabled(moduleName)) return;
     const prefix = `[DEBUG:${moduleName}]`;
+    
+    // Format arguments properly
+    const message = args.map(arg => {
+      if (typeof arg === 'object' && arg !== null) {
+        try {
+          return JSON.stringify(arg);
+        } catch {
+          return String(arg);
+        }
+      }
+      return String(arg);
+    }).join(' ');
+    
     if (this.logger && typeof this.logger.info === 'function') {
-      this.logger.info(prefix, ...args);
+      this.logger.info(`${prefix} ${message}`);
     } else {
-      console.log(prefix, ...args);
+      console.log(prefix, message);
     }
   }
 

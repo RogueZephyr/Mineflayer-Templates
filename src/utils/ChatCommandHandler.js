@@ -7,6 +7,7 @@ import SaveChestLocation from './SaveChestLocation.js';
 import DepositBehavior from '../behaviors/DepositBehavior.js';
 import DebugTools from './DebugTools.js';
 import AreaRegistry from '../state/AreaRegistry.js';
+import WhitelistManager from './WhitelistManager.js';
 
 const cmdPrefix = '!';
 
@@ -17,6 +18,10 @@ export default class ChatCommandHandler {
     this.behaviors = behaviors;
     this.logger = new Logger();
     this.commands = new Map();
+    
+    // Whitelist manager for player permissions
+    this.whitelist = new WhitelistManager(master);
+    this.bot.whitelist = this.whitelist;
 
     // Core systems
     // support modules that export default OR named export
@@ -70,36 +75,105 @@ export default class ChatCommandHandler {
     });
   }
 
+  // Helper method to reply (whisper if private, chat if public)
+  reply(username, message, isPrivate) {
+    if (isPrivate) {
+      this.bot.whisper(username, message);
+    } else {
+      this.bot.chat(message);
+    }
+  }
+
   // ------------------------------
   // Command Parser
   // ------------------------------
+  /**
+   * Check if command is targeted at this bot
+   * Returns { isForThisBot: boolean, remainingArgs: array }
+   */
+  parseTargetedCommand(args) {
+    if (args.length === 0) {
+      return { isForThisBot: true, remainingArgs: args };
+    }
+
+    const firstArg = args[0];
+    
+    // Check if first arg is a bot name
+    const botNameList = this.bot.constructor.usernameList || [];
+    const isBotName = botNameList.some(name => 
+      name.toLowerCase() === firstArg.toLowerCase()
+    );
+
+    if (isBotName) {
+      // Command is targeted at a specific bot
+      const isForThisBot = firstArg.toLowerCase() === this.bot.username.toLowerCase();
+      return { 
+        isForThisBot, 
+        remainingArgs: args.slice(1) // Remove bot name from args
+      };
+    }
+
+    // No bot name specified, command is for all bots
+    return { isForThisBot: true, remainingArgs: args };
+  }
+
   handleMessage(username, message, isPrivate) {
     if (username === this.bot.username) return;
-    const isMaster = username === this.master;
 
-    if (!isMaster && isPrivate) return; // only master allowed private commands
-
+    // For whispers, don't require the ! prefix (optional)
+    // For public chat, require the ! prefix
     if (!isPrivate && !message.startsWith(cmdPrefix)) return;
 
-    const parts = message.replace(cmdPrefix, '').trim().split(/\s+/);
+    // Remove prefix if present, otherwise parse as-is for whispers
+    const cleanMessage = message.startsWith(cmdPrefix) 
+      ? message.replace(cmdPrefix, '').trim() 
+      : message.trim();
+    
+    const parts = cleanMessage.split(/\s+/);
     const commandName = parts.shift().toLowerCase();
     const args = parts;
 
     if (this.commands.has(commandName)) {
       try {
+        // Check if command is targeted at this bot
+        const { isForThisBot, remainingArgs } = this.parseTargetedCommand(args);
+        
+        if (!isForThisBot) {
+          // Command is for another bot, ignore it silently
+          return;
+        }
+
+        // Check whitelist permissions
+        if (!this.whitelist.canCommandBot(username, this.bot.username)) {
+          // Player not allowed to command this bot - ignore silently
+          this.logger.info(`[${this.bot.username}] ${username} not whitelisted for this bot`);
+          return;
+        }
+
+        if (!this.whitelist.canUseCommand(username, this.bot.username, commandName)) {
+          // Player not allowed to use this command
+          this.reply(username, `You don't have permission to use '${commandName}'`, isPrivate);
+          this.logger.info(`[${this.bot.username}] ${username} denied command: ${commandName}`);
+          return;
+        }
+
+        // Log command execution with bot name
+        const targetInfo = (args.length > 0 && remainingArgs.length !== args.length) 
+          ? ` (targeted at ${this.bot.username})`
+          : '';
+        this.logger.info(`[${this.bot.username}] ${username} executing: ${commandName}${targetInfo}`);
+
         const handler = this.commands.get(commandName);
-        // allow async handlers
-        const res = handler.call(this, username, args, isPrivate);
+        // allow async handlers, pass remaining args after bot name filtering
+        const res = handler.call(this, username, remainingArgs, isPrivate);
         if (res instanceof Promise) res.catch(err => this.logger.error(`[Cmd:${commandName}] ${err.message || err}`));
       } catch (err) {
         this.logger.error(`[Cmd:${commandName}] Handler threw: ${err.message || err}`);
       }
     } else {
-      // unknown command
-      if (isPrivate) {
-        this.bot.whisper(username, `Unknown command: ${commandName}`);
-      } else {
-        this.bot.chat(`Unknown command: ${commandName}`);
+      // unknown command - only reply if whitelisted
+      if (this.whitelist.isWhitelisted(username)) {
+        this.reply(username, `Unknown command: ${commandName}`, isPrivate);
       }
     }
   }
@@ -110,14 +184,88 @@ export default class ChatCommandHandler {
   registerDefaultCommands() {
     // 🧠 Basic
     this.register('ping', (username, args, isPrivate) => {
-      const reply = 'Pong!';
-      if (isPrivate) this.bot.whisper(username, reply);
-      else this.bot.chat(reply);
+      this.reply(username, 'Pong!', isPrivate);
     });
 
-    this.register('say', (username, args) => {
+    this.register('help', (username, args, isPrivate) => {
+      const playerInfo = this.whitelist.getPlayerInfo(username);
+      const helpMsg = [
+        '=== Bot Commands ===',
+        'Tip: Whisper commands work without ! prefix',
+        'Tip: Target specific bots: command <botname> <args>',
+        'Examples: sethome RogueW0lfy 100 64 200',
+        '          goto Subject_9-17 200 65 300',
+        '          farm RogueW0lfy start',
+        'Basic: ping, say, help, whoami',
+        'Movement: come, goto, follow, stop',
+        'Home: sethome [x y z], home, ishome',
+        'Actions: eat, sleep, farm, collect',
+        'Utility: loginv, drop, deposit, debug'
+      ];
+      
+      if (playerInfo) {
+        helpMsg.push('--- Your Permissions ---');
+        const bots = playerInfo.allowedBots.includes('*') ? 'All bots' : playerInfo.allowedBots.join(', ');
+        const cmds = playerInfo.allowedCommands.includes('*') ? 'All commands' : playerInfo.allowedCommands.join(', ');
+        helpMsg.push(`Bots: ${bots}`);
+        helpMsg.push(`Commands: ${cmds}`);
+      }
+      
+      // Always send help via whisper to avoid spam
+      helpMsg.forEach(line => this.bot.whisper(username, line));
+      if (!isPrivate) {
+        this.reply(username, 'Check private messages for help!', isPrivate);
+      }
+    });
+
+    this.register('whoami', (username, args, isPrivate) => {
+      const playerInfo = this.whitelist.getPlayerInfo(username);
+      if (!playerInfo) {
+        this.reply(username, 'You are not whitelisted', isPrivate);
+        return;
+      }
+      
+      const bots = playerInfo.allowedBots.includes('*') ? 'All bots' : playerInfo.allowedBots.join(', ');
+      const cmds = playerInfo.allowedCommands.includes('*') ? 'All commands' : `${playerInfo.allowedCommands.length} commands`;
+      
+      this.bot.whisper(username, '=== Your Permissions ===');
+      this.bot.whisper(username, `Allowed Bots: ${bots}`);
+      this.bot.whisper(username, `Allowed Commands: ${cmds}`);
+      if (playerInfo.description) {
+        this.bot.whisper(username, `Note: ${playerInfo.description}`);
+      }
+    });
+
+    this.register('whitelist', (username, args, isPrivate) => {
+      // Only master can manage whitelist
+      if (username !== this.master) {
+        this.reply(username, 'Only master can manage whitelist', isPrivate);
+        return;
+      }
+
+      const subCmd = args[0]?.toLowerCase();
+      
+      if (subCmd === 'reload') {
+        const count = this.whitelist.reload();
+        this.reply(username, `Whitelist reloaded: ${count} players`, isPrivate);
+      } else if (subCmd === 'list') {
+        const players = Object.keys(this.whitelist.whitelist);
+        if (players.length === 0) {
+          this.reply(username, 'No players whitelisted', isPrivate);
+        } else {
+          this.bot.whisper(username, `Whitelisted players (${players.length}):`);
+          players.forEach(p => this.bot.whisper(username, `- ${p}`));
+        }
+      } else {
+        this.reply(username, 'Usage: whitelist <reload|list>', isPrivate);
+      }
+    });
+
+    this.register('say', (username, args, isPrivate) => {
       const message = args.join(' ');
-      if (message.length > 0) this.bot.chat(message);
+      if (message.length > 0) {
+        this.reply(username, message, isPrivate);
+      }
     });
 
     // 🧭 Movement
@@ -125,37 +273,123 @@ export default class ChatCommandHandler {
       this.pathfinder.comeTo(username);
     });
 
-    this.register('goto', (username, args) => {
+    this.register('goto', (username, args, isPrivate) => {
       if (args.length < 3) {
-        this.bot.chat('Usage: !goto <x> <y> <z>');
+        this.reply(username, 'Usage: goto <x> <y> <z>', isPrivate);
         return;
       }
       const [x, y, z] = args.map(Number);
       this.pathfinder.goTo(x, y, z);
     });
 
-    this.register('follow', (username, args) => {
+    this.register('follow', (username, args, isPrivate) => {
       if (!args[0]) {
-        this.bot.chat('Usage: !follow <playerName>');
+        this.reply(username, 'Usage: follow <playerName>', isPrivate);
         return;
       }
       this.pathfinder.followPlayer(args[0]);
     });
 
-    this.register('stop', () => {
-      this.pathfinder.stop();
+    this.register('stop', (username, args, isPrivate) => {
+      // Stop pathfinding
+      if (this.pathfinder && typeof this.pathfinder.stop === 'function') {
+        this.pathfinder.stop();
+      }
+      if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') {
+        this.bot.pathfinder.setGoal(null);
+      }
+      
+      // Stop all active behaviors
+      let stoppedTasks = [];
+      if (this.behaviors.farm && this.behaviors.farm.isWorking) {
+        this.behaviors.farm.disable();
+        stoppedTasks.push('farming');
+      }
+      
+      if (this.behaviors.itemCollector && this.behaviors.itemCollector.isRunning) {
+        this.behaviors.itemCollector.stopAuto();
+        stoppedTasks.push('collection');
+      }
+      
+      // Release all claimed blocks/areas if coordinator exists
+      if (this.bot.coordinator) {
+        this.bot.coordinator.cleanup();
+      }
+      
+      const message = stoppedTasks.length > 0 
+        ? `Stopped: ${stoppedTasks.join(', ')}` 
+        : 'All tasks stopped';
+      this.reply(username, message, isPrivate);
     });
 
-    // 🍗 Eat
-    this.register('eat', async (username) => {
+    // 🏠 Home
+    this.register('sethome', (username, args, isPrivate) => {
+      if (!this.behaviors.home) {
+        this.reply(username, 'Home behavior not available', isPrivate);
+        return;
+      }
+      
+      // If coordinates provided, use them
+      if (args.length === 3) {
+        const [x, y, z] = args.map(Number);
+        if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+          this.behaviors.home.setHomeAt(x, y, z);
+          this.reply(username, `Home set to: ${x}, ${y}, ${z}`, isPrivate);
+          return;
+        }
+      }
+      
+      // Otherwise use current position
+      if (this.behaviors.home.setHome()) {
+        this.reply(username, 'Home position set!', isPrivate);
+      } else {
+        this.reply(username, 'Failed to set home position', isPrivate);
+      }
+    });
+
+    this.register('home', async (username, args, isPrivate) => {
+      if (!this.behaviors.home) {
+        this.reply(username, 'Home behavior not available', isPrivate);
+        return;
+      }
+      this.reply(username, 'Going home...', isPrivate);
+      const success = await this.behaviors.home.goHome();
+      if (success) {
+        this.reply(username, 'Arrived at home!', isPrivate);
+      } else {
+        this.reply(username, 'Failed to reach home', isPrivate);
+      }
+    });
+
+    this.register('ishome', (username, args, isPrivate) => {
+      if (!this.behaviors.home) {
+        this.reply(username, 'Home behavior not available', isPrivate);
+        return;
+      }
+      const home = this.behaviors.home.getHome();
+      if (!home) {
+        this.reply(username, 'No home position set. Use sethome', isPrivate);
+        return;
+      }
+      if (this.behaviors.home.isAtHome()) {
+        this.reply(username, 'Yes, I am at home!', isPrivate);
+      } else {
+        this.reply(username, `Home is at: ${home.x}, ${home.y}, ${home.z}`, isPrivate);
+      }
+    });
+
+    // �🍗 Eat
+    this.register('eat', async (username, args, isPrivate) => {
       if (!this.behaviors?.eat) {
-        this.bot.chat("Eat behavior not available.");
+        this.reply(username, "Eat behavior not available.", isPrivate);
         return;
       }
       try {
         await this.behaviors.eat.checkHunger();
+        this.reply(username, "Checked hunger", isPrivate);
       } catch (err) {
         this.logger.error(`Error eating: ${err}`);
+        this.reply(username, "Failed to eat", isPrivate);
       }
     });
 
@@ -234,7 +468,39 @@ export default class ChatCommandHandler {
       }
     });
 
-    // 🧭 Deposit nearest
+    // � Item collection controls
+    this.register('collect', async (username, args) => {
+      if (!this.bot.itemCollector) {
+        this.bot.whisper(username, 'Item collector not available.');
+        return;
+      }
+
+      const sub = (args[0] || 'once').toLowerCase();
+      if (sub === 'start') {
+        const type = (args[1] || 'farm').toLowerCase();
+        const intervalMs = Math.max(2000, Number(args[2]) || 10000);
+        const radius = Math.max(2, Number(args[3]) || 8);
+        this.bot.itemCollector.startAuto({ type, intervalMs, radius });
+        this.bot.whisper(username, `Auto-collect started (type=${type}, every ${intervalMs}ms, radius=${radius}).`);
+        return;
+      }
+      if (sub === 'stop') {
+        this.bot.itemCollector.stopAuto();
+        this.bot.whisper(username, 'Auto-collect stopped.');
+        return;
+      }
+      // once (optional: type or radius)
+      const type = (args[1] || 'farm').toLowerCase();
+      const radius = Math.max(2, Number(args[2]) || 8);
+      try {
+        const n = await this.bot.itemCollector.collectOnce({ type, radius });
+        this.bot.whisper(username, `Collected ${n} dropped items.`);
+      } catch (e) {
+        this.bot.whisper(username, `Collect failed: ${e.message || e}`);
+      }
+    });
+
+    // �🧭 Deposit nearest
     this.register('depositnearest', async (username, args) => {
       if (!this.behaviors.inventory) {
         this.bot.chat("Inventory behavior not available.");
@@ -423,7 +689,15 @@ export default class ChatCommandHandler {
                 break;
 
             case 'stop':
+                // Force stop farming
+                this.behaviors.farm.isWorking = false;
                 this.behaviors.farm.disable();
+                
+                // Stop pathfinder
+                if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') {
+                  this.bot.pathfinder.setGoal(null);
+                }
+                
                 this.bot.chat("Stopped farming");
                 break;
 
@@ -505,6 +779,26 @@ export default class ChatCommandHandler {
         this.bot.chat(`testgoto failed: ${err.message || err}`);
         this.logger.error(`[testgoto] ${err.message || err}`);
       }
+    });
+
+    // Coordinator status (master only)
+    this.register('coordstatus', (username) => {
+      if (username !== this.master) {
+        this.bot.whisper(username, 'Only master can view coordinator status.');
+        return;
+      }
+      
+      if (!this.bot.coordinator) {
+        this.bot.whisper(username, 'No coordinator available (single bot mode)');
+        return;
+      }
+      
+      const diag = this.bot.coordinator.getDiagnostics();
+      this.bot.whisper(username, `=== Coordinator Status ===`);
+      this.bot.whisper(username, `Active Bots: ${diag.activeBots}`);
+      this.bot.whisper(username, `Claimed Blocks: ${diag.claimedBlocks}`);
+      this.bot.whisper(username, `Claimed Areas: ${diag.claimedAreas}`);
+      this.bot.whisper(username, `Bot Names: ${diag.bots.join(', ')}`);
     });
   }
 

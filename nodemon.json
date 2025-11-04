@@ -1,4 +1,4 @@
 {
   "watch": ["src"],
-  "ignore": ["src/config/chestLocations.json", "src/config/*.json"] 
+  "ignore": ["data/*.json", "src/config/*.json"]
 }

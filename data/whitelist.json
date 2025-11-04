@@ -1,0 +1,20 @@
+{
+  "description": "Whitelist configuration for bot command permissions. Master player always has full access to all bots.",
+  "players": {
+    "Aron_123": {
+      "allowedBots": ["Subject_9-17"],
+      "allowedCommands": ["ping", "help", "goto", "stop", "home", "ishome", "loginv"],
+      "description": "Example: Limited access to Subject_9-17 only"
+    },
+    "FriendPlayer": {
+      "allowedBots": ["RogueW0lfy", "L@b_R4t"],
+      "allowedCommands": ["ping", "help", "come", "follow", "stop"],
+      "description": "Example: Can command RogueW0lfy and L@b_R4t with basic commands"
+    }
+  },
+  "notes": {
+    "allowedBots": "List of bot names this player can command. Use ['*'] for all bots.",
+    "allowedCommands": "List of commands this player can use. Use ['*'] for all commands.",
+    "master": "The master player (defined in config.json) always has full access to all bots and all commands."
+  }
+}

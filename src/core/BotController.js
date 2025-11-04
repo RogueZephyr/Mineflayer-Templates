@@ -14,15 +14,42 @@ import SleepBehavior from '../behaviors/SleepBehavior.js';
 import InventoryBehavior from '../behaviors/InventoryBehavior.js';
 import DepositBehavior from '../behaviors/DepositBehavior.js';
 import FarmBehavior from '../behaviors/FarmBehavior.js';
+import ItemCollectorBehavior from '../behaviors/ItemCollectorBehavior.js';
+import HomeBehavior from '../behaviors/HomeBehavior.js';
 import SaveChestLocation from '../utils/SaveChestLocation.js';
 import DebugTools from '../utils/DebugTools.js';
 import AreaRegistry from '../state/AreaRegistry.js';
+import fs from 'fs';
+import path from 'path';
 
 export default class BotController {
-  static usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t']
+  static usernameList = null
   static usedNames = new Set()
 
-  constructor(config, username = null) {
+  static loadUsernameList() {
+    if (BotController.usernameList !== null) return BotController.usernameList;
+    
+    try {
+      const namesPath = path.join(process.cwd(), 'data', 'botNames.json');
+      const data = JSON.parse(fs.readFileSync(namesPath, 'utf8'));
+      BotController.usernameList = data.names || [];
+      
+      if (BotController.usernameList.length === 0) {
+        console.warn('[BotController] No names found in botNames.json, using fallback');
+        BotController.usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t'];
+      }
+      
+      return BotController.usernameList;
+    } catch (e) {
+      console.warn('[BotController] Failed to load botNames.json, using fallback:', e.message);
+      BotController.usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t'];
+      return BotController.usernameList;
+    }
+  }
+
+  constructor(config, username = null, coordinator = null) {
+    // Ensure username list is loaded
+    BotController.loadUsernameList();
     this.username = username || this.getAvailableUsername();
     this.config = config;
     this.bot = null;
@@ -31,15 +58,28 @@ export default class BotController {
     this.behaviors = {};
     this.master = 'RogueZ3phyr';
     this.hungerCheckInterval = null;
+    this.coordinator = coordinator; // Shared coordinator for multi-bot sync
   }
 
   getAvailableUsername() {
+    BotController.loadUsernameList();
+    
     for (const name of BotController.usernameList) {
       if (!BotController.usedNames.has(name)) {
         BotController.usedNames.add(name);
         return name;
       }
     }
+    
+    // If all names used, cycle back (add suffix)
+    const baseName = BotController.usernameList[0] || 'Bot';
+    let counter = 1;
+    while (BotController.usedNames.has(`${baseName}_${counter}`)) {
+      counter++;
+    }
+    const newName = `${baseName}_${counter}`;
+    BotController.usedNames.add(newName);
+    return newName;
   }
 
   start() {
@@ -103,6 +143,42 @@ export default class BotController {
       } else {
         if (!this.bot.pathfinder) this.bot.loadPlugin(PathfinderPlugin);
         const moves = new MovementsCtor(this.bot, this.mcData);
+        
+        // Add collision avoidance if coordinator is available
+        if (this.coordinator) {
+          // Override the cost calculation to add penalties for positions near other bots
+          const originalGetMoveForward = moves.getMoveForward;
+          if (originalGetMoveForward) {
+            moves.getMoveForward = function(node, dir, neighbors) {
+              const result = originalGetMoveForward.call(this, node, dir, neighbors);
+              if (result && result.cost) {
+                const targetPos = { x: result.x, y: result.y, z: result.z };
+                if (this.bot.coordinator && this.bot.coordinator.isPositionOccupied(targetPos, 1.5, this.bot.username)) {
+                  result.cost *= 50; // Make occupied positions expensive
+                }
+              }
+              return result;
+            }.bind(moves);
+          }
+          
+          // Also override getLandingBlock to avoid bot positions
+          const originalGetLandingBlock = moves.getLandingBlock;
+          if (originalGetLandingBlock) {
+            moves.getLandingBlock = function(node, dir) {
+              const result = originalGetLandingBlock.call(this, node, dir);
+              if (result && result.x !== undefined) {
+                const targetPos = { x: result.x, y: result.y, z: result.z };
+                if (this.bot.coordinator && this.bot.coordinator.isPositionOccupied(targetPos, 1.5, this.bot.username)) {
+                  return null; // Block this movement
+                }
+              }
+              return result;
+            }.bind(moves);
+          }
+          
+          this.logger.info('[BotController] Collision avoidance enabled in pathfinder');
+        }
+        
         this.bot.pathfinder.setMovements(moves);
 
         // optional: extend search radius if present
@@ -125,8 +201,33 @@ export default class BotController {
     this.behaviors.deposit = new DepositBehavior(this.bot, this.logger);
     this.bot.depositBehavior = this.behaviors.deposit;
 
+  // Item collector (modular)
+  this.behaviors.itemCollector = new ItemCollectorBehavior(this.bot, this.logger, this.areaRegistry);
+  this.bot.itemCollector = this.behaviors.itemCollector;
+    // Auto-start item collector if configured
+    try {
+      const icCfg = this.config?.behaviors?.itemCollector || {};
+      if (icCfg.autoStart) {
+        this.behaviors.itemCollector.startAuto({
+          type: icCfg.type || 'farm',
+          intervalMs: typeof icCfg.intervalMs === 'number' ? icCfg.intervalMs : 10000,
+          radius: typeof icCfg.radius === 'number' ? icCfg.radius : 8
+        });
+        this.logger.info('[BotController] ItemCollector auto-started');
+      }
+    } catch (e) {
+      this.logger.warn('[BotController] Failed to auto-start ItemCollector:', e.message || e);
+    }
+
     this.debug = new DebugTools(this.bot, this.logger, this.behaviors, { chestRegistry: this.chestRegistry, depositBehavior: this.behaviors.deposit });
     this.bot.debugTools = this.debug;
+
+    // Register with coordinator for multi-bot sync
+    if (this.coordinator) {
+      this.coordinator.registerBot(this.bot);
+      this.bot.coordinator = this.coordinator;
+      this.logger.info('[BotController] Registered with shared coordinator');
+    }
 
     this.logger.info(`${chalk.green(this.username)} has loaded correctly`)
     this.bot.chat(`/msg ${this.master} Hello! Test environment loaded!`);
@@ -134,6 +235,7 @@ export default class BotController {
     // Initialize all behaviors with proper configuration
     const lookConfig = this.config.behaviors?.look || {};
     this.behaviors.look = new LookBehavior(this.bot, lookConfig);
+    this.behaviors.look.master = this.master; // Pass master username
     this.behaviors.look.enable(); // enable by default
     this.logger.info('LookBehavior initialized successfully!');
 
@@ -158,22 +260,31 @@ export default class BotController {
     this.behaviors.farm.setLookBehavior(this.behaviors.look);
     this.logger.info('FarmBehavior initialized successfully!');
 
+    // Home behavior for graceful logout
+    this.behaviors.home = new HomeBehavior(this.bot, this.logger);
+    this.bot.homeBehavior = this.behaviors.home; // Make accessible via bot object
+    this.logger.info('HomeBehavior initialized successfully!');
+
     this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors);
     this.logger.info('ChatCommandHandler initialized successfully!');
 
-    // Set up hunger check interval
+    // Set up hunger check interval (always runs, logs only in debug mode)
     if (this.hungerCheckInterval) {
       clearInterval(this.hungerCheckInterval);
     }
 
     this.hungerCheckInterval = setInterval(async () => {
       try {
-        this.logger.info(`Checking hunger...`);
+        if (this.config.debug === true) {
+          this.logger.info(`[Debug] Checking hunger...`);
+        }
         await this.behaviors.eat.checkHunger();
       } catch (err) {
-        this.logger.error(`Error in checkHunger: ${err.message}`);
+        if (this.config.debug === true) {
+          this.logger.error(`[Debug] Error in checkHunger: ${err.message}`);
+        }
       }
-    }, 10000);
+    }, 30000); // Check every 30 seconds
 
     this.logger.info('All behaviors initialized successfully!');
   }

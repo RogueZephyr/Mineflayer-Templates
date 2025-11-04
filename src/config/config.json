@@ -23,6 +23,12 @@
             "carrots",
             "potatoes"
         ]
+  },
+  "itemCollector": {
+    "autoStart": true,
+    "type": "farm",
+    "intervalMs": 10000,
+    "radius": 8
     }
   },
   "dashboard": { "enabled": true, "port": 3000 }

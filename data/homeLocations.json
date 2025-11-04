@@ -1,0 +1,20 @@
+{
+  "description": "Home positions for bots. Each bot can have a home position set via !sethome command.",
+  "homes": {
+    "RogueW0lfy": {
+      "x": 699,
+      "y": 63,
+      "z": 532
+    },
+    "Subject_9-17": {
+      "x": 699,
+      "y": 63,
+      "z": 530
+    },
+    "L@b_R4t": {
+      "x": 699,
+      "y": 63,
+      "z": 528
+    }
+  }
+}

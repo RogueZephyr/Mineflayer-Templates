@@ -27,19 +27,35 @@ export default class FarmBehavior {
   enable() {
     this.enabled = true;
     if (this.lookBehavior) this.lookBehavior.pause();
-    this.logger.info('[Farm] Behavior enabled; look paused');
+    this.logger.info(`[Farm][${this.bot.username}] Behavior enabled; look paused`);
   }
 
   disable() {
     this.enabled = false;
     this.isWorking = false;
     if (this.lookBehavior) this.lookBehavior.resume();
-    this.logger.info('[Farm] Behavior disabled; look resumed');
+    this.logger.info(`[Farm][${this.bot.username}] Behavior disabled; look resumed`);
   }
 
   _emitDebug(...args) {
-    console.log('[DEBUG:Farm]', ...args);
-    try { if (this.bot.debugTools) this.bot.debugTools.log('farm', ...args); } catch (_) {}
+    // Format all arguments into a single string
+    const message = args.map(arg => {
+      if (typeof arg === 'object') {
+        try {
+          return JSON.stringify(arg);
+        } catch {
+          return String(arg);
+        }
+      }
+      return String(arg);
+    }).join(' ');
+    
+    try { 
+      if (this.bot.debugTools && this.bot.debugTools.isEnabled('farm')) {
+        console.log('[DEBUG:Farm]', message);
+        this.bot.debugTools.log('farm', message);
+      }
+    } catch (_) {}
   }
 
   // simple robust goto using pathfinder if available
@@ -464,9 +480,51 @@ export default class FarmBehavior {
 
     if (!area && this.farmingArea) area = this.farmingArea;
     if (!area) {
-      this.logger.info('[Farm] No farming area provided');
+      this.logger.info(`[Farm][${this.bot.username}] No farming area provided`);
       this.isWorking = false;
       return;
+    }
+
+    // Assign work zone if coordinator is available
+    let workArea = area;
+    if (this.bot.coordinator) {
+      // Get all active bots (regardless of position)
+      const activeBots = this.bot.coordinator.getAllBotPositions();
+      const botCount = activeBots.length;
+      
+      this._emitDebug(`Detected ${botCount} active bot(s)`);
+      
+      // Check if we already have a work zone assigned
+      const existingZone = this.bot.coordinator.getWorkZone(this.bot.username, 'farm');
+      
+      if (botCount > 1) {
+        // Multiple bots - need to divide area
+        if (existingZone) {
+          workArea = existingZone;
+          this._emitDebug('Using existing work zone assignment');
+        } else {
+          // Get list of all bot IDs for stable zone assignment
+          const botIds = activeBots.map(b => b.botId).sort(); // Sort for consistent ordering
+          this._emitDebug(`Bot IDs: ${JSON.stringify(botIds)}, My ID: ${this.bot.username}`);
+          
+          const myIndex = botIds.indexOf(this.bot.username);
+          this._emitDebug(`My index in sorted list: ${myIndex}`);
+          
+          if (myIndex >= 0) {
+            // Divide area among all bots
+            const zones = this.bot.coordinator.divideArea(area, botCount, this.bot.username);
+            this._emitDebug(`Zones created: ${zones.length}`);
+            if (myIndex < zones.length) {
+              workArea = zones[myIndex];
+              this.bot.coordinator.assignWorkZone(this.bot.username, 'farm', workArea);
+              this._emitDebug(`Assigned to work zone ${myIndex + 1}/${botCount} - X: ${workArea.start.x}-${workArea.end.x}, Z: ${workArea.start.z}-${workArea.end.z}`);
+            }
+          }
+        }
+      } else {
+        // Single bot - use full area
+        this._emitDebug('Single bot mode - using full farming area');
+      }
     }
 
     // loop until disabled
@@ -487,36 +545,97 @@ export default class FarmBehavior {
 
         // harvest pass - _harvestBlock now replants immediately after harvesting
         while (true) {
-          const { harvest } = this._scanArea(area);
+          // Check if still enabled/working before each iteration
+          if (!this.enabled || !this.isWorking) break;
+          
+          const { harvest } = this._scanArea(workArea);
           if (!harvest || harvest.length === 0) break;
+          
+          // Find an unclaimed block to harvest
+          let toHarvest = null;
+          for (const block of harvest) {
+            if (!this.bot.coordinator || !this.bot.coordinator.isBlockClaimed(block, this.bot.username)) {
+              if (this.bot.coordinator) {
+                if (this.bot.coordinator.claimBlock(this.bot.username, block, 'harvest')) {
+                  toHarvest = block;
+                  break;
+                }
+              } else {
+                toHarvest = block;
+                break;
+              }
+            }
+          }
+          
+          if (!toHarvest) break; // No unclaimed blocks
+          
           didWork = true;
-          // harvest first found (keeps it simple and similar to official loop)
-          const toHarvest = harvest.shift();
           await this._harvestBlock(toHarvest);
+          
+          // Release claim after harvest
+          if (this.bot.coordinator) {
+            this.bot.coordinator.releaseBlock(toHarvest);
+          }
+          
+          // Check again after harvest
+          if (!this.enabled || !this.isWorking) break;
+          
           // small delay between actions
           await new Promise(r => setTimeout(r, 250));
         }
 
         // manual sow pass for any remaining empty farmland
-        const { sow } = this._scanArea(area);
-        if (sow && sow.length > 0) {
-          // ensure seeds exist before trying to plant
-          const seed = this.bot.inventory.items().find(it => it && it.name && (it.name.includes('seeds') || it.name.includes('wheat_seeds') || it.name.includes('carrot') || it.name.includes('potato')));
-          if (seed) {
-            this._emitDebug(`Found ${sow.length} empty farmland spots to plant`);
-            for (const toSow of sow) {
-              didWork = true;
-              await this._sowAt(toSow);
-              await new Promise(r => setTimeout(r, 200));
+        // Check if still enabled before starting sow pass
+        if (!this.enabled || !this.isWorking) {
+          this._emitDebug('Stopping: disabled during harvest pass');
+        } else {
+          const { sow } = this._scanArea(workArea);
+          if (sow && sow.length > 0) {
+            // ensure seeds exist before trying to plant
+            const seed = this.bot.inventory.items().find(it => it && it.name && (it.name.includes('seeds') || it.name.includes('wheat_seeds') || it.name.includes('carrot') || it.name.includes('potato')));
+            if (seed) {
+              this._emitDebug(`Found ${sow.length} empty farmland spots to plant`);
+              for (const toSow of sow) {
+                // Check if still enabled before each plant
+                if (!this.enabled || !this.isWorking) break;
+                
+                // Check if block is claimed
+                if (this.bot.coordinator && this.bot.coordinator.isBlockClaimed(toSow, this.bot.username)) {
+                  continue; // Skip claimed blocks
+                }
+                
+                // Claim block
+                if (this.bot.coordinator) {
+                  if (!this.bot.coordinator.claimBlock(this.bot.username, toSow, 'plant')) {
+                    continue; // Failed to claim
+                  }
+                }
+                
+                didWork = true;
+                await this._sowAt(toSow);
+                
+                // Release claim
+                if (this.bot.coordinator) {
+                  this.bot.coordinator.releaseBlock(toSow);
+                }
+                
+                await new Promise(r => setTimeout(r, 200));
+              }
             }
           }
         }
 
-        // collect dropped items in the area to prevent lag
+        // collect dropped items within 3 blocks but only within work zone (delegated to ItemCollectorBehavior)
         try {
-          await this._collectDroppedItems(area);
+          if (this.bot.itemCollector && typeof this.bot.itemCollector.collectOnce === 'function') {
+            // Only collect items within 3 blocks of bot's current position AND within their work zone
+            await this.bot.itemCollector.collectOnce({ radius: 3, workZone: workArea });
+          } else if (typeof this._collectDroppedItems === 'function') {
+            // fallback to local method if collector not available
+            await this._collectDroppedItems(workArea);
+          }
         } catch (e) {
-          this._emitDebug('startFarming: collectDroppedItems failed', e.message || e);
+          this._emitDebug('startFarming: item collection failed', e.message || e);
         }
 
         // proactive deposit if inventory large or if we did any work and want to keep inventory tidy
@@ -530,9 +649,9 @@ export default class FarmBehavior {
 
         if (!didWork) {
           // nothing to do: move center, wait, then retry (official script uses setTimeout loop)
-          const centerX = Math.floor((area.start.x + area.end.x) / 2);
-          const centerZ = Math.floor((area.start.z + area.end.z) / 2);
-          const preferredY = (this.bot.entity && this.bot.entity.position) ? Math.floor(this.bot.entity.position.y) : (area.start.y || 64);
+          const centerX = Math.floor((workArea.start.x + workArea.end.x) / 2);
+          const centerZ = Math.floor((workArea.start.z + workArea.end.z) / 2);
+          const preferredY = (this.bot.entity && this.bot.entity.position) ? Math.floor(this.bot.entity.position.y) : (workArea.start.y || 64);
         
           try {
             await this._gotoBlock(new Vec3(centerX + 0.5, preferredY, centerZ + 0.5), 15000);
@@ -544,7 +663,7 @@ export default class FarmBehavior {
         }
       }
     } catch (err) {
-      this.logger.error(`[Farm] Error while farming: ${err.message || err}`);
+      this.logger.error(`[Farm][${this.bot.username}] Error while farming: ${err.message || err}`);
     } finally {
       // return hoe to tools chest when done
       await this.returnHoeToChest();
