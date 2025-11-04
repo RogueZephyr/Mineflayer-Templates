@@ -16,8 +16,10 @@ import DepositBehavior from '../behaviors/DepositBehavior.js';
 import FarmBehavior from '../behaviors/FarmBehavior.js';
 import ItemCollectorBehavior from '../behaviors/ItemCollectorBehavior.js';
 import HomeBehavior from '../behaviors/HomeBehavior.js';
+import WoodCuttingBehavior from '../behaviors/WoodCuttingBehavior.js';
 import SaveChestLocation from '../utils/SaveChestLocation.js';
 import DebugTools from '../utils/DebugTools.js';
+import PathfindingUtil from '../utils/PathfindingUtil.js';
 import AreaRegistry from '../state/AreaRegistry.js';
 import fs from 'fs';
 import path from 'path';
@@ -144,39 +146,10 @@ export default class BotController {
         if (!this.bot.pathfinder) this.bot.loadPlugin(PathfinderPlugin);
         const moves = new MovementsCtor(this.bot, this.mcData);
         
-        // Add collision avoidance if coordinator is available
+        // Simplified collision avoidance - only check final goal, not every movement
+        // (Checking every movement is too expensive and causes lag)
         if (this.coordinator) {
-          // Override the cost calculation to add penalties for positions near other bots
-          const originalGetMoveForward = moves.getMoveForward;
-          if (originalGetMoveForward) {
-            moves.getMoveForward = function(node, dir, neighbors) {
-              const result = originalGetMoveForward.call(this, node, dir, neighbors);
-              if (result && result.cost) {
-                const targetPos = { x: result.x, y: result.y, z: result.z };
-                if (this.bot.coordinator && this.bot.coordinator.isPositionOccupied(targetPos, 1.5, this.bot.username)) {
-                  result.cost *= 50; // Make occupied positions expensive
-                }
-              }
-              return result;
-            }.bind(moves);
-          }
-          
-          // Also override getLandingBlock to avoid bot positions
-          const originalGetLandingBlock = moves.getLandingBlock;
-          if (originalGetLandingBlock) {
-            moves.getLandingBlock = function(node, dir) {
-              const result = originalGetLandingBlock.call(this, node, dir);
-              if (result && result.x !== undefined) {
-                const targetPos = { x: result.x, y: result.y, z: result.z };
-                if (this.bot.coordinator && this.bot.coordinator.isPositionOccupied(targetPos, 1.5, this.bot.username)) {
-                  return null; // Block this movement
-                }
-              }
-              return result;
-            }.bind(moves);
-          }
-          
-          this.logger.info('[BotController] Collision avoidance enabled in pathfinder');
+          this.logger.info('[BotController] Bot coordination enabled (work zones & block claiming)');
         }
         
         this.bot.pathfinder.setMovements(moves);
@@ -229,6 +202,11 @@ export default class BotController {
       this.logger.info('[BotController] Registered with shared coordinator');
     }
 
+    // Initialize centralized pathfinding utility with config
+    this.pathfindingUtil = new PathfindingUtil(this.bot, this.coordinator, this.logger, this.config);
+    this.bot.pathfindingUtil = this.pathfindingUtil;
+    this.logger.info('[BotController] PathfindingUtil initialized with path caching');
+
     this.logger.info(`${chalk.green(this.username)} has loaded correctly`)
     this.bot.chat(`/msg ${this.master} Hello! Test environment loaded!`);
 
@@ -260,6 +238,11 @@ export default class BotController {
     this.behaviors.farm.setLookBehavior(this.behaviors.look);
     this.logger.info('FarmBehavior initialized successfully!');
 
+    // WoodCutting behavior with look behavior integration
+    this.behaviors.woodcutting = new WoodCuttingBehavior(this.bot, this.logger, this.master);
+    this.behaviors.woodcutting.setLookBehavior(this.behaviors.look);
+    this.logger.info('WoodCuttingBehavior initialized successfully!');
+
     // Home behavior for graceful logout
     this.behaviors.home = new HomeBehavior(this.bot, this.logger);
     this.bot.homeBehavior = this.behaviors.home; // Make accessible via bot object
@@ -286,6 +269,17 @@ export default class BotController {
       }
     }, 30000); // Check every 30 seconds
 
+    // Set up coordinator cleanup interval (if coordinator is available)
+    if (this.coordinator) {
+      this.coordinatorCleanupInterval = setInterval(() => {
+        try {
+          this.coordinator.cleanup();
+        } catch (err) {
+          this.logger.error(`[Coordinator] Cleanup error: ${err.message}`);
+        }
+      }, 10000); // Clean up every 10 seconds
+    }
+
     this.logger.info('All behaviors initialized successfully!');
   }
 
@@ -297,6 +291,12 @@ export default class BotController {
     if (this.hungerCheckInterval) {
       clearInterval(this.hungerCheckInterval);
       this.hungerCheckInterval = null;
+    }
+
+    // Clear coordinator cleanup interval
+    if (this.coordinatorCleanupInterval) {
+      clearInterval(this.coordinatorCleanupInterval);
+      this.coordinatorCleanupInterval = null;
     }
 
     // Clear behaviors to prevent references to old bot instance

@@ -191,15 +191,9 @@ export default class ChatCommandHandler {
       const playerInfo = this.whitelist.getPlayerInfo(username);
       const helpMsg = [
         '=== Bot Commands ===',
-        'Tip: Whisper commands work without ! prefix',
-        'Tip: Target specific bots: command <botname> <args>',
-        'Examples: sethome RogueW0lfy 100 64 200',
-        '          goto Subject_9-17 200 65 300',
-        '          farm RogueW0lfy start',
-        'Basic: ping, say, help, whoami',
         'Movement: come, goto, follow, stop',
         'Home: sethome [x y z], home, ishome',
-        'Actions: eat, sleep, farm, collect',
+        'Actions: eat, sleep, farm, wood, collect',
         'Utility: loginv, drop, deposit, debug'
       ];
       
@@ -268,18 +262,44 @@ export default class ChatCommandHandler {
       }
     });
 
-    // 🧭 Movement
-    this.register('come', (username) => {
-      this.pathfinder.comeTo(username);
+    // 🧭 Movement (using centralized PathfindingUtil)
+    this.register('come', async (username) => {
+      if (!this.bot.pathfindingUtil) {
+        this.bot.chat('Pathfinding not available');
+        return;
+      }
+      
+      try {
+        await this.bot.pathfindingUtil.gotoPlayer(username, 3);
+        this.bot.chat(`Coming to ${username}`);
+      } catch (e) {
+        this.bot.chat(`Failed to come: ${e.message}`);
+      }
     });
 
-    this.register('goto', (username, args, isPrivate) => {
+    this.register('goto', async (username, args, isPrivate) => {
       if (args.length < 3) {
         this.reply(username, 'Usage: goto <x> <y> <z>', isPrivate);
         return;
       }
+      
+      if (!this.bot.pathfindingUtil) {
+        this.reply(username, 'Pathfinding not available', isPrivate);
+        return;
+      }
+      
       const [x, y, z] = args.map(Number);
-      this.pathfinder.goTo(x, y, z);
+      if ([x, y, z].some(isNaN)) {
+        this.reply(username, 'Invalid coordinates', isPrivate);
+        return;
+      }
+      
+      try {
+        await this.bot.pathfindingUtil.goto({ x, y, z }, 30000, 'goto_command');
+        this.bot.chat(`Arrived at ${x}, ${y}, ${z}`);
+      } catch (e) {
+        this.bot.chat(`Failed to go to location: ${e.message}`);
+      }
     });
 
     this.register('follow', (username, args, isPrivate) => {
@@ -287,14 +307,27 @@ export default class ChatCommandHandler {
         this.reply(username, 'Usage: follow <playerName>', isPrivate);
         return;
       }
-      this.pathfinder.followPlayer(args[0]);
+      
+      if (!this.bot.pathfindingUtil) {
+        this.reply(username, 'Pathfinding not available', isPrivate);
+        return;
+      }
+      
+      try {
+        this.bot.pathfindingUtil.followPlayer(args[0], 3);
+        this.bot.chat(`Following ${args[0]}`);
+      } catch (e) {
+        this.bot.chat(`Failed to follow: ${e.message}`);
+      }
     });
 
     this.register('stop', (username, args, isPrivate) => {
-      // Stop pathfinding
-      if (this.pathfinder && typeof this.pathfinder.stop === 'function') {
-        this.pathfinder.stop();
+      // Stop pathfinding using utility
+      if (this.bot.pathfindingUtil) {
+        this.bot.pathfindingUtil.stop();
       }
+      
+      // Fallback: stop pathfinder directly
       if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') {
         this.bot.pathfinder.setGoal(null);
       }
@@ -707,6 +740,57 @@ export default class ChatCommandHandler {
         }
     });
 
+    // 🪓 Woodcutting Commands
+    this.register('wood', async (username, args) => {
+        if (!this.behaviors.woodcutting) {
+            this.bot.chat("Woodcutting behavior not available");
+            return;
+        }
+
+        const subCommand = args[0]?.toLowerCase();
+
+        switch (subCommand) {
+            case 'start':
+                // Check if area is set
+                let woodcuttingArea = null;
+                if (this.bot.areaRegistry) {
+                    woodcuttingArea = await this.bot.areaRegistry.getArea('wood');
+                }
+                
+                if (woodcuttingArea) {
+                    this.bot.chat(`Starting woodcutting in designated area...`);
+                } else {
+                    this.bot.chat("No woodcutting area set - will search for nearest trees");
+                }
+                
+                // Enable behavior and start
+                if (!this.behaviors.woodcutting.enabled && typeof this.behaviors.woodcutting.enable === 'function') {
+                    this.behaviors.woodcutting.enable();
+                }
+                
+                await this.behaviors.woodcutting.startWoodcutting(woodcuttingArea);
+                break;
+
+            case 'stop':
+                // Force stop woodcutting
+                this.behaviors.woodcutting.isWorking = false;
+                this.behaviors.woodcutting.disable();
+                
+                // Stop pathfinder
+                if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') {
+                    this.bot.pathfinder.setGoal(null);
+                }
+                
+                this.bot.chat("Stopped woodcutting");
+                break;
+
+            default:
+                this.bot.chat("Usage: !wood <start|stop>");
+                this.bot.chat("Optional: Set area with !setarea wood start/end");
+                this.bot.chat("Without area, bot will find nearest trees");
+        }
+    });
+
     // Debug toggles: master only
     this.register('debug', async (username, args) => {
       const sub = (args[0] || '').toLowerCase();
@@ -766,11 +850,12 @@ export default class ChatCommandHandler {
       }
       this.bot.chat(`Attempting test goto ${x},${y},${z}`);
       try {
-        // prefer bot.pathfinder.goto when available (FarmBehavior uses same)
-        if (this.bot.pathfinder && typeof this.bot.pathfinder.goto === 'function') {
+        // Use PathfindingUtil for collision avoidance
+        if (this.bot.pathfindingUtil) {
+          await this.bot.pathfindingUtil.gotoBlock({x, y, z}, 60000, 'testgoto');
+        } else if (this.bot.pathfinder && typeof this.bot.pathfinder.goto === 'function') {
+          // Fallback to direct pathfinder
           await this.bot.pathfinder.goto(new (await import('mineflayer-pathfinder')).goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
-        } else if (this.pathfinder && typeof this.pathfinder.goTo === 'function') {
-          await this.pathfinder.goTo(x, y, z);
         } else {
           this.bot.chat('No pathfinder available to run goto');
         }
@@ -799,6 +884,49 @@ export default class ChatCommandHandler {
       this.bot.whisper(username, `Claimed Blocks: ${diag.claimedBlocks}`);
       this.bot.whisper(username, `Claimed Areas: ${diag.claimedAreas}`);
       this.bot.whisper(username, `Bot Names: ${diag.bots.join(', ')}`);
+    });
+
+    // Path cache management (master only)
+    this.register('cache', (username, args) => {
+      if (username !== this.master) {
+        this.bot.whisper(username, 'Only master can manage path cache.');
+        return;
+      }
+
+      if (!this.bot.pathfindingUtil) {
+        this.bot.whisper(username, 'PathfindingUtil not available');
+        return;
+      }
+
+      const sub = args[0]?.toLowerCase();
+      
+      switch (sub) {
+        case 'stats': {
+          const stats = this.bot.pathfindingUtil.getCacheStats();
+          this.bot.whisper(username, `=== Path Cache Stats ===`);
+          this.bot.whisper(username, `Size: ${stats.size}/${stats.maxSize}`);
+          this.bot.whisper(username, `Hit Rate: ${stats.hitRate} (${stats.hits}/${stats.total})`);
+          this.bot.whisper(username, `Saves: ${stats.saves}, Invalidations: ${stats.invalidations}`);
+          break;
+        }
+        case 'debug': {
+          const debug = this.bot.pathfindingUtil.getCacheDebugInfo();
+          this.bot.whisper(username, `=== Path Cache Debug ===`);
+          this.bot.whisper(username, `Hit Rate: ${debug.stats.hitRate}`);
+          this.bot.whisper(username, `Top paths (by usage):`);
+          debug.paths.slice(0, 5).forEach((p, i) => {
+            this.bot.whisper(username, `${i+1}. ${p.key.substring(0, 30)}... (${p.useCount} uses, ${p.length} nodes, ${p.age}s old)`);
+          });
+          break;
+        }
+        case 'clear': {
+          this.bot.pathfindingUtil.clearCache();
+          this.bot.whisper(username, 'Path cache cleared');
+          break;
+        }
+        default:
+          this.bot.whisper(username, 'Usage: !cache <stats|debug|clear>');
+      }
     });
   }
 

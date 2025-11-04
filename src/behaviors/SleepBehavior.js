@@ -46,15 +46,23 @@ export default class SleepBehavior {
       if (!bedBlock) throw new Error('Bed block no longer exists!');
 
       // Stop any ongoing movement
-      this.bot.pathfinder.setGoal(null);
+      if (this.bot.pathfindingUtil) {
+        this.bot.pathfindingUtil.stop();
+      } else if (this.bot.pathfinder) {
+        this.bot.pathfinder.setGoal(null);
+      }
 
       // Set proper movements
       const defaultMovements = new Movements(this.bot, this.mcData);
       this.bot.pathfinder.setMovements(defaultMovements);
 
       // Walk to bed
-      const goal = new GoalNear(this.bedPos.x, this.bedPos.y, this.bedPos.z, 1);
-      await this.bot.pathfinder.goto(goal);
+      if (this.bot.pathfindingUtil) {
+        await this.bot.pathfindingUtil.gotoBlock(this.bedPos, 30000, 'sleep');
+      } else {
+        const goal = new GoalNear(this.bedPos.x, this.bedPos.y, this.bedPos.z, 1);
+        await this.bot.pathfinder.goto(goal);
+      }
 
       // Attempt to sleep
       await this.bot.sleep(bedBlock);

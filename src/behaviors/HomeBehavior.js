@@ -159,17 +159,21 @@ export default class HomeBehavior {
     this._emitDebug('Navigating to home position');
 
     try {
-      if (!this.bot.pathfinder || typeof this.bot.pathfinder.goto !== 'function') {
+      const homeVec = new Vec3(this.homePosition.x, this.homePosition.y, this.homePosition.z);
+      
+      // Use centralized pathfinding utility if available
+      if (this.bot.pathfindingUtil) {
+        await this.bot.pathfindingUtil.gotoBlock(homeVec, timeoutMs, 'goHome');
+      } else if (this.bot.pathfinder && typeof this.bot.pathfinder.goto === 'function') {
+        // Fallback to direct pathfinder
+        const goal = new goals.GoalBlock(homeVec.x, homeVec.y, homeVec.z);
+        await Promise.race([
+          this.bot.pathfinder.goto(goal),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
+        ]);
+      } else {
         throw new Error('Pathfinder not available');
       }
-
-      const homeVec = new Vec3(this.homePosition.x, this.homePosition.y, this.homePosition.z);
-      const goal = new goals.GoalBlock(homeVec.x, homeVec.y, homeVec.z);
-      
-      await Promise.race([
-        this.bot.pathfinder.goto(goal),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
-      ]);
 
       this.logger.info(`[Home][${this.bot.username}] Arrived at home`);
       this._emitDebug('Successfully arrived at home');

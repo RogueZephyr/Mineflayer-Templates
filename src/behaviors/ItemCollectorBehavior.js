@@ -29,6 +29,19 @@ export default class ItemCollectorBehavior {
 
   async _goto(pos, timeoutMs = 15000) {
     if (!pos) return false;
+    
+    // Use centralized pathfinding utility if available
+    if (this.bot.pathfindingUtil) {
+      try {
+        await this.bot.pathfindingUtil.goto(pos, timeoutMs, 'collect_item', 1.5);
+        return true;
+      } catch (e) {
+        this._emitDebug('pathfindingUtil failed', e.message || e);
+        return false;
+      }
+    }
+    
+    // Fallback: Legacy pathfinding
     const v = new Vec3(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
     if (!this.bot.pathfinder || typeof this.bot.pathfinder.goto !== 'function') return false;
     try {
@@ -103,8 +116,12 @@ export default class ItemCollectorBehavior {
     }
     if (!targets.length) return 0;
 
+    // Limit items per collection pass to prevent overload
+    const maxItems = 10;
+    const itemsToCollect = targets.slice(0, maxItems);
+
     let collected = 0;
-    for (const ent of targets) {
+    for (const ent of itemsToCollect) {
       if (!this.enabled) break;
       if (!this.bot.entities[ent.id]) continue; // already gone
       try {
@@ -123,6 +140,11 @@ export default class ItemCollectorBehavior {
   startAuto({ type = 'farm', intervalMs = 10000, radius = 8 } = {}) {
     if (this._interval) this.stopAuto();
     this.isRunning = true;
+    
+    // Add initial stagger based on bot username hash to spread out collection
+    const botHash = (this.bot.username || '').split('').reduce((a, b) => a + b.charCodeAt(0), 0);
+    const initialDelay = (botHash % 3000); // 0-3 second stagger
+    
     const tick = async () => {
       if (!this.enabled) return;
       try {
@@ -131,9 +153,17 @@ export default class ItemCollectorBehavior {
         this._emitDebug('startAuto tick error', e.message || e);
       }
     };
-    // run immediately, then at interval
-    tick();
-    this._interval = setInterval(tick, Math.max(2000, intervalMs));
+    
+    // Start with staggered delay
+    setTimeout(() => {
+      tick();
+      // Then use randomized interval to prevent synchronization
+      this._interval = setInterval(() => {
+        // Add ±20% randomization to interval
+        const jitter = (Math.random() - 0.5) * 0.4 * intervalMs;
+        setTimeout(tick, jitter);
+      }, Math.max(2000, intervalMs));
+    }, initialDelay);
   }
 
   stopAuto() {

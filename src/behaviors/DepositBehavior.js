@@ -91,54 +91,30 @@ export default class DepositBehavior {
   // Robust navigation helper (used by depositAll and other methods)
   async _gotoBlock(pos, timeoutMs = 30000, near = 1.5) {
     if (!pos) throw new Error('_gotoBlock: pos required');
-    const target = new Vec3(Math.floor(pos.x) + 0.5, Math.floor(pos.y), Math.floor(pos.z) + 0.5);
 
-    // prefer promise-style goto if available
+    // Use centralized pathfinding utility if available
+    if (this.bot.pathfindingUtil) {
+      try {
+        await this.bot.pathfindingUtil.gotoBlock(pos, timeoutMs, 'deposit');
+        return;
+      } catch (err) {
+        this.logger && this.logger.warn && this.logger.warn(`[Deposit] pathfindingUtil failed: ${err.message || err}`);
+        throw err;
+      }
+    }
+
+    // Fallback: Legacy pathfinding
+    const target = new Vec3(Math.floor(pos.x) + 0.5, Math.floor(pos.y), Math.floor(pos.z) + 0.5);
+    
     if (this.bot.pathfinder && typeof this.bot.pathfinder.goto === 'function') {
       try {
-        // prefer GoalNear to allow approaching adjacent to chest
         const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(near, 1));
         await this.bot.pathfinder.goto(goal);
         return;
       } catch (err) {
-        this.logger && this.logger.warn && this.logger.warn(`[Deposit] pathfinder.goto failed, will fallback: ${err.message || err}`);
+        this.logger && this.logger.warn && this.logger.warn(`[Deposit] pathfinder.goto failed: ${err.message || err}`);
+        throw err;
       }
-    }
-
-    // fallback to setGoal + poll pattern
-    if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') {
-      // try GoalNear first
-      const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(near, 1));
-      try {
-        this.bot.pathfinder.setGoal(goal);
-      } catch (e) {
-        this.logger && this.logger.warn && this.logger.warn(`[Deposit] setGoal threw: ${e.message || e}`);
-      }
-
-      return await new Promise((resolve, reject) => {
-        const start = Date.now();
-        const iv = setInterval(() => {
-          try {
-            const ent = this.bot.entity;
-            if (!ent || !ent.position) return;
-            const dx = ent.position.x - target.x;
-            const dy = ent.position.y - target.y;
-            const dz = ent.position.z - target.z;
-            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (dist < Math.max(near, 1.6)) {
-              clearInterval(iv);
-              return resolve();
-            }
-            if (Date.now() - start > timeoutMs) {
-              clearInterval(iv);
-              try { this.bot.pathfinder.setGoal(null); } catch (_) {}
-              return reject(new Error('navigation timeout'));
-            }
-          } catch (e) {
-            // ignore transient errors
-          }
-        }, 250);
-      });
     }
 
     throw new Error('No pathfinder available on bot');

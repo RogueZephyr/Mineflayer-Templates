@@ -29,7 +29,19 @@
     "type": "farm",
     "intervalMs": 10000,
     "radius": 8
+    },
+    "woodcutting": {
+      "enabled": true,
+      "replantSaplings": true,
+      "depositThreshold": 128,
+      "searchRadius": 50
     }
+  },
+  "pathCache": {
+    "maxCacheSize": 100,
+    "pathValidityRadius": 5,
+    "cacheExpiration": 300000,
+    "minPathLength": 10
   },
   "dashboard": { "enabled": true, "port": 3000 }
 }

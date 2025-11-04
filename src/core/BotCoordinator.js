@@ -11,8 +11,10 @@ export default class BotCoordinator {
     this.claimedBlocks = new Map(); // 'x,y,z' -> { botId, timestamp, task }
     this.claimedAreas = new Map(); // areaId -> { botId, timestamp, bounds }
     this.taskQueue = new Map(); // taskType -> [taskData]
+    this.pathfindingGoals = new Map(); // botId -> { target: Vec3, timestamp, task }
     this.blockClaimDuration = 30000; // 30 seconds
     this.areaClaimDuration = 300000; // 5 minutes
+    this.goalClaimDuration = 15000; // 15 seconds for pathfinding goals
   }
 
   /**
@@ -259,6 +261,103 @@ export default class BotCoordinator {
   }
 
   /**
+   * Register a pathfinding goal to prevent bot stacking
+   */
+  registerPathfindingGoal(botId, targetPos, task = 'generic') {
+    if (!botId || !targetPos) return;
+    
+    this.pathfindingGoals.set(botId, {
+      target: new Vec3(Math.floor(targetPos.x), Math.floor(targetPos.y), Math.floor(targetPos.z)),
+      timestamp: Date.now(),
+      task
+    });
+  }
+
+  /**
+   * Clear pathfinding goal for a bot
+   */
+  clearPathfindingGoal(botId) {
+    if (!botId) return;
+    this.pathfindingGoals.delete(botId);
+  }
+
+  /**
+   * Check if a position is targeted by another bot's pathfinding
+   */
+  isGoalOccupied(targetPos, excludeBotId = null, radius = 1) {
+    if (!targetPos) return false;
+    
+    const now = Date.now();
+    const targetVec = new Vec3(Math.floor(targetPos.x), Math.floor(targetPos.y), Math.floor(targetPos.z));
+    
+    for (const [botId, goal] of this.pathfindingGoals.entries()) {
+      if (excludeBotId && botId === excludeBotId) continue;
+      
+      // Check if goal is still valid (not expired)
+      if (now - goal.timestamp > this.goalClaimDuration) {
+        this.pathfindingGoals.delete(botId);
+        continue;
+      }
+      
+      // Check distance to target
+      const dist = Math.sqrt(
+        Math.pow(goal.target.x - targetVec.x, 2) +
+        Math.pow(goal.target.y - targetVec.y, 2) +
+        Math.pow(goal.target.z - targetVec.z, 2)
+      );
+      
+      if (dist <= radius) return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Find an alternative position near the desired target
+   */
+  findAlternativeGoal(desiredPos, excludeBotId = null, searchRadius = 3) {
+    if (!desiredPos) return null;
+    
+    // Try positions in a spiral pattern around desired location
+    const baseX = Math.floor(desiredPos.x);
+    const baseY = Math.floor(desiredPos.y);
+    const baseZ = Math.floor(desiredPos.z);
+    
+    // First check if desired position is free
+    if (!this.isGoalOccupied(desiredPos, excludeBotId, 1)) {
+      return new Vec3(baseX, baseY, baseZ);
+    }
+    
+    // Spiral outward to find free position
+    for (let radius = 1; radius <= searchRadius; radius++) {
+      const positions = [];
+      
+      // Generate positions at current radius
+      for (let x = -radius; x <= radius; x++) {
+        for (let z = -radius; z <= radius; z++) {
+          // Only check perimeter of current radius
+          if (Math.abs(x) === radius || Math.abs(z) === radius) {
+            positions.push(new Vec3(baseX + x, baseY, baseZ + z));
+          }
+        }
+      }
+      
+      // Shuffle to add randomness
+      positions.sort(() => Math.random() - 0.5);
+      
+      // Check each position
+      for (const pos of positions) {
+        if (!this.isGoalOccupied(pos, excludeBotId, 1)) {
+          return pos;
+        }
+      }
+    }
+    
+    // If all positions occupied, return original with offset
+    return new Vec3(baseX + Math.floor(Math.random() * 4) - 2, baseY, baseZ + Math.floor(Math.random() * 4) - 2);
+  }
+
+  /**
    * Clean up expired claims
    */
   cleanup() {
@@ -277,6 +376,13 @@ export default class BotCoordinator {
         this.claimedAreas.delete(key);
       }
     }
+    
+    // Clean pathfinding goals
+    for (const [botId, goal] of this.pathfindingGoals.entries()) {
+      if (now - goal.timestamp > this.goalClaimDuration) {
+        this.pathfindingGoals.delete(botId);
+      }
+    }
   }
 
   /**
@@ -287,8 +393,14 @@ export default class BotCoordinator {
       activeBots: this.bots.size,
       claimedBlocks: this.claimedBlocks.size,
       claimedAreas: this.claimedAreas.size,
+      pathfindingGoals: this.pathfindingGoals.size,
       bots: Array.from(this.bots.keys()),
-      positions: this.getAllBotPositions()
+      positions: this.getAllBotPositions(),
+      goals: Array.from(this.pathfindingGoals.entries()).map(([botId, goal]) => ({
+        botId,
+        target: goal.target,
+        task: goal.task
+      }))
     };
   }
 }

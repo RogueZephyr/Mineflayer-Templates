@@ -177,8 +177,12 @@ export default class InventoryBehavior {
             this.logger.info(`[Inventory] Nearest container found at ${nearest.pos}`);
 
             // Move to chest
-            const goal = new GoalNear(nearest.pos.x, nearest.pos.y, nearest.pos.z, 1);
-            await this.bot.pathfinder.goto(goal);
+            if (this.bot.pathfindingUtil) {
+                await this.bot.pathfindingUtil.goto(nearest.pos, 30000, 'inventory_deposit', 1);
+            } else {
+                const goal = new GoalNear(nearest.pos.x, nearest.pos.y, nearest.pos.z, 1);
+                await this.bot.pathfinder.goto(goal);
+            }
 
             // Open chest
             const chestBlock = this.bot.blockAt(nearest.pos);
@@ -264,8 +268,12 @@ export default class InventoryBehavior {
             const dist = this.bot.entity.position.distanceTo(targetChest.position);
             if (dist > 2.2) {
             this.logger.info(`[Inventory] Moving ${dist.toFixed(1)} blocks to chest...`);
-            const goal = new GoalNear(targetChest.position.x, targetChest.position.y, targetChest.position.z, 1);
-            await this.bot.pathfinder.goto(goal);
+            if (this.bot.pathfindingUtil) {
+                await this.bot.pathfindingUtil.goto(targetChest.position, 30000, 'inventory_deposit', 1);
+            } else {
+                const goal = new GoalNear(targetChest.position.x, targetChest.position.y, targetChest.position.z, 1);
+                await this.bot.pathfinder.goto(goal);
+            }
             } else {
             this.logger.info('[Inventory] Already near chest, skipping movement.');
             }
@@ -343,7 +351,11 @@ export default class InventoryBehavior {
 
         try {
             const pickupPos = new Vec3(target.position.x, target.position.y, target.position.z);
-            await this.bot.pathfinder.goto(new GoalNear(pickupPos.x, pickupPos.y, pickupPos.z, 1));
+            if (this.bot.pathfindingUtil) {
+                await this.bot.pathfindingUtil.goto(pickupPos, 30000, 'inventory_pickup', 1);
+            } else {
+                await this.bot.pathfinder.goto(new GoalNear(pickupPos.x, pickupPos.y, pickupPos.z, 1));
+            }
             await this.bot.collectBlock.collect(target);
             this.logger.info(`${logLabel} Picked up ${itemName}`);
             return true;

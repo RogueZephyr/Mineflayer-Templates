@@ -59,9 +59,21 @@ export default class FarmBehavior {
   }
 
   // simple robust goto using pathfinder if available
-  async _gotoBlock(pos, timeoutMs = 30000) {
+  async _gotoBlock(pos, timeoutMs = 30000, task = 'farm') {
     if (!pos) throw new Error('_gotoBlock: pos required');
 
+    // Use centralized pathfinding utility if available
+    if (this.bot.pathfindingUtil) {
+      try {
+        await this.bot.pathfindingUtil.gotoBlock(pos, timeoutMs, task);
+        return;
+      } catch (e) {
+        this._emitDebug('pathfindingUtil.gotoBlock failed:', e.message || e);
+        throw e;
+      }
+    }
+
+    // Fallback: Legacy pathfinding code for backwards compatibility
     // normalize pos to a Vec3-like object (numeric x,y,z) — avoid calling .floored()
     let v;
     try {
@@ -89,6 +101,7 @@ export default class FarmBehavior {
       Math.floor(Number(v.y || 0)),
       Math.floor(Number(v.z || 0))
     );
+    
     const gx = floored.x;
     const gy = floored.y;
     const gz = floored.z;
@@ -302,8 +315,16 @@ export default class FarmBehavior {
     // estimate baseY near bot
     const baseY = Math.floor((this.bot.entity && this.bot.entity.position) ? this.bot.entity.position.y : 64);
 
+    // Limit scan results to prevent overload
+    const maxCrops = 50;
+    let cropsFound = 0;
+
     for (let x = startX; x <= endX; x++) {
+      if (cropsFound >= maxCrops) break;
+      
       for (let z = startZ; z <= endZ; z++) {
+        if (cropsFound >= maxCrops) break;
+        
         for (let y = baseY + 1; y >= baseY - 2; y--) {
           const block = this.bot.blockAt(new Vec3(x, y, z));
           if (!block) continue;
@@ -311,12 +332,18 @@ export default class FarmBehavior {
           // farmland detection for sowing
           if (name.includes('farmland')) {
             const above = this.bot.blockAt(new Vec3(x, y + 1, z));
-            if (!above || above.type === 0) sow.push({ x, y, z });
+            if (!above || above.type === 0) {
+              sow.push({ x, y, z });
+              cropsFound++;
+            }
             break;
           }
           // crop detection
           if (/(wheat|carrot|potato|carrots|potatoes)/i.test(name)) {
-            if (this._isFullyGrown(block)) harvest.push({ x, y, z });
+            if (this._isFullyGrown(block)) {
+              harvest.push({ x, y, z });
+              cropsFound++;
+            }
             break;
           }
         }
@@ -527,6 +554,19 @@ export default class FarmBehavior {
       }
     }
 
+    // Add staggered start delay to prevent all bots from working simultaneously
+    if (this.bot.coordinator) {
+      const activeBots = this.bot.coordinator.getAllBotPositions();
+      const botIds = activeBots.map(b => b.botId).sort();
+      const myIndex = botIds.indexOf(this.bot.username);
+      
+      if (myIndex > 0) {
+        const delay = myIndex * 1500; // 1.5 second stagger per bot
+        this._emitDebug(`Staggering start by ${delay}ms to reduce load`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+
     // loop until disabled
     try {
       while (this.enabled && this.isWorking) {
@@ -658,8 +698,12 @@ export default class FarmBehavior {
           } catch (e) {
             this._emitDebug('startFarming: failed to move to center', e.message || e);
           }
-          // sleep idle interval
-          await new Promise(r => setTimeout(r, this.idleScanIntervalMs));
+          // sleep idle interval with randomization to prevent synchronization
+          const waitTime = this.idleScanIntervalMs + Math.random() * 2000;
+          await new Promise(r => setTimeout(r, waitTime));
+        } else {
+          // Brief pause between cycles even when working
+          await new Promise(r => setTimeout(r, 500));
         }
       }
     } catch (err) {
