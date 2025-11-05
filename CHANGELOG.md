@@ -1,6 +1,56 @@
-# CHANGELOG - ToolHandler Integration & Refactoring
+# CHANGELOG
 
-## Version 2.0.0 - November 5, 2025
+## Version 1.0.0 - November 5, 2025
+
+### 🎉 Initial Public Release
+
+This is the first official public release of Mineflayer BasicBot, a fully-featured, modular Minecraft bot built with Mineflayer.
+
+> **Note:** Version 1.0.0 marks the first public, open source release. Previous version numbers (e.g., 1.1.0) were used during private development and are not part of the public release history.
+
+#### ✨ Core Features
+- **Multi-Bot Coordination** - Spawn and manage multiple bots with staggered delays
+- **Whitelist Permission System** - Per-bot and per-command access control
+- **Farming Automation** - Intelligent crop harvesting, replanting, and collection
+- **Woodcutting Automation** - Tree detection, harvesting, and replanting
+- **Mining Automation** - Strip mining, tunneling, and intelligent tool management
+- **Intelligent Tool System** - Automatic tool selection and durability management
+- **Path Caching** - 99% faster pathfinding for repeated routes
+- **Custom Whisper Support** - Multiple whisper pattern formats
+- **Graceful Shutdown** - Ctrl+C sends bots home before disconnecting
+
+#### 📦 Project Structure
+- Modular behavior system for easy extensibility
+- Comprehensive documentation in `docs/` directory
+- Configuration management system
+- State persistence for home locations, chests, and areas
+
+#### 🔧 Technical Highlights
+- **ToolHandler.js** - Centralized tool management with 200+ block mappings
+- **PathfindingUtil.js** - Centralized pathfinding with caching
+- **BotCoordinator.js** - Multi-bot synchronization and work zone division
+- **ChatCommandHandler.js** - Command registry with permission system
+- Full ES Module (ESM) support
+
+#### 📝 Documentation
+- Comprehensive README with examples and usage guide
+- Individual documentation files for major features
+- Command reference guide
+- Installation and quick start guides
+
+#### 🛡️ Open Source
+- MIT License
+- Contributing guidelines
+- Code of Conduct
+- Security policy
+
+---
+
+## Version 2.0.0-dev - November 5, 2025
+
+### 🔧 Major Refactoring: ToolHandler Integration
+
+This version documents the refactoring of manual tool management code to use the centralized ToolHandler system across all behaviors.
 
 ### 🔧 Major Refactoring: ToolHandler Integration
 

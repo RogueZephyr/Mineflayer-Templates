@@ -1,47 +1,4 @@
 {
-  "wood": {
-    "x": 665,
-    "y": 64,
-    "z": 403
-  },
-  "stone": {
-    "x": 664,
-    "y": 64,
-    "z": 404
-  },
-  "crops": {
-    "x": 667,
-    "y": 64,
-    "z": 406
-  },
-  "food": {
-    "x": 667,
-    "y": 64,
-    "z": 406
-  },
-  "resources": {
-    "x": 663,
-    "y": 64,
-    "z": 405
-  },
-  "ores": {
-    "x": 662,
-    "y": 64,
-    "z": 406
-  },
-  "mobdrops": {
-    "x": 662,
-    "y": 64,
-    "z": 408
-  },
-  "equipment": {
-    "x": 662,
-    "y": 64,
-    "z": 407
-  },
-  "tools": {
-    "x": 698,
-    "y": 63,
-    "z": 534
-  }
+  "description": "Chest locations for different item categories. Set using deposit commands.",
+  "chests": {}
 }

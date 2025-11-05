@@ -1,11 +1,22 @@
 {
   "name": "mineflayer_basicbot",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "description": "Modular Minecraft bot with farming, chest management, and deposit automation",
   "license": "MIT",
   "author": "RogueZ3phyr",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RogueZephyr/Mineflayer-Templates.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RogueZephyr/Mineflayer-Templates/issues"
+  },
+  "homepage": "https://github.com/RogueZephyr/Mineflayer-Templates#readme",
   "type": "module",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "scripts": {
     "start": "nodemon src/index.js",
     "dev": "node src/index.js",
@@ -27,6 +38,11 @@
     "bot",
     "mineflayer",
     "automation",
-    "farming"
+    "farming",
+    "mining",
+    "woodcutting",
+    "multi-bot",
+    "pathfinding",
+    "minecraft-bot"
   ]
 }

@@ -1,5 +1,10 @@
 # Mineflayer BasicBot - Multi-Bot Automation System
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D16.0.0-brightgreen)](https://nodejs.org/)
+[![Minecraft](https://img.shields.io/badge/minecraft-1.20.1-blue)](https://www.minecraft.net/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 A **fully-featured, modular Minecraft bot** built with **Mineflayer** and **modern ES Modules (ESM)**.  
 Features multi-bot coordination, whitelist permissions, graceful shutdown, farming automation, and intelligent pathfinding.
 
@@ -211,6 +216,8 @@ Without a bot name, all bots respond:
 ---
 
 ## 🚀 Quick Start
+
+> **New to the project?** Check out our comprehensive [Getting Started Guide](GETTING_STARTED.md) for step-by-step instructions!
 
 ### Installation
 ```bash
@@ -533,17 +540,64 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed refactoring history and migration 
 
 ## 🤝 Contributing
 
-This bot is designed to be modular and extensible. To add new behaviors:
+We welcome contributions from the community! This bot is designed to be modular and extensible.
+
+**Ways to contribute:**
+- Report bugs and request features through [Issues](https://github.com/RogueZephyr/Mineflayer-Templates/issues)
+- Submit pull requests for bug fixes or new features
+- Improve documentation
+- Share your bot configurations and use cases
+
+**Getting started:**
+1. Read the [Contributing Guidelines](CONTRIBUTING.md)
+2. Check out the [Code of Conduct](CODE_OF_CONDUCT.md)
+3. Look for [good first issues](https://github.com/RogueZephyr/Mineflayer-Templates/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+
+**To add new behaviors:**
 1. Create new file in `src/behaviors/`
 2. Implement `enable()` and `disable()` methods
 3. Register in `BotController.js`
 4. Add commands in `ChatCommandHandler.js`
+5. Document your changes
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ---
 
 ## 📜 License
 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
 MIT License - Feel free to modify and use for your projects!
+
+---
+
+## 🔒 Security
+
+Security is important to us. If you discover a security vulnerability, please review our [Security Policy](SECURITY.md) for information on how to report it responsibly.
+
+---
+
+## 📞 Support & Community
+
+- **Questions?** Open a [Discussion](https://github.com/RogueZephyr/Mineflayer-Templates/discussions)
+- **Bug Reports:** [Issues](https://github.com/RogueZephyr/Mineflayer-Templates/issues)
+- **Feature Requests:** [Issues](https://github.com/RogueZephyr/Mineflayer-Templates/issues)
+
+---
+
+## ⭐ Star History
+
+If you find this project useful, please consider giving it a star! It helps others discover the project.
+
+---
+
+## 🙏 Acknowledgments
+
+Special thanks to:
+- The [Mineflayer](https://github.com/PrismarineJS/mineflayer) team for the amazing bot framework
+- All contributors who help improve this project
+- The Minecraft community for inspiration and feedback
 
 ---
 
