@@ -46,16 +46,20 @@ Quick reference for all bot commands. Use `/msg <BotName> <command>` for whisper
 
 ### Mining
 ```
-!mine strip <dir> [length] [branches]  - Strip mining
-!mine tunnel <dir> [length]            - Create 2x2 tunnel
-!mine stop                             - Stop mining
-!mine status                           - Show progress
+!mine strip <dir> [length] [branches]      - Strip mining
+!mine tunnel <dir> [length] [width] [height] - Tunnel (defaults from config)
+!mine deposit                               - Deposit after current task or immediately if idle
+!mine stop                                  - Stop mining
+!mine status                                - Show progress
 ```
 **Directions:** north, south, east, west
 
 **Examples:**
 - `!mine strip east 100 10` - 100m tunnel, 10 branches
 - `!mine tunnel north 50` - 50m tunnel heading north
+- `!mine tunnel south 30 4 3` - 30m tunnel 4 blocks wide, 3 high
+
+Note: Deposit keeps tools, up to N bridging blocks, and at least M food where N/M come from `behaviors.mining` in `src/config/config.json` (`keepBridgingTotal`, `keepFoodMin`).
 
 ### Tool Management
 ```

@@ -57,6 +57,19 @@ export default class ChatCommandHandler {
   }
 
   // ------------------------------
+  // Safe chat helpers (rate-limited)
+  // ------------------------------
+  async _sendLines(username, lines, isPrivate, delayMs = 350) {
+    // Send a sequence of lines with a small delay to avoid server anti-spam
+    for (const line of lines) {
+      if (!line) continue;
+      this.reply(username, line, isPrivate);
+      // Basic throttle; many servers kick for rapid whispers/chats
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+
+  // ------------------------------
   // Listener Setup
   // ------------------------------
   initListeners() {
@@ -290,7 +303,7 @@ export default class ChatCommandHandler {
       this.reply(username, 'Pong!', isPrivate);
     });
 
-    this.register('help', (username, args, isPrivate) => {
+    this.register('help', async (username, args, isPrivate) => {
       const playerInfo = this.whitelist.getPlayerInfo(username);
       const helpMsg = [
         '=== Bot Commands ===',
@@ -313,9 +326,11 @@ export default class ChatCommandHandler {
         helpMsg.push('!mine strip <dir> [length] [branches]');
         helpMsg.push('  - Strip mine with side branches');
         helpMsg.push('  - Example: !mine strip east 100 10');
-        helpMsg.push('!mine tunnel <dir> [length]');
-        helpMsg.push('  - Create 2x2 tunnel');
-        helpMsg.push('  - Example: !mine tunnel north 50');
+        helpMsg.push('!mine tunnel <dir> [length] [width] [height]');
+        helpMsg.push('  - Create a tunnel; defaults from config (e.g., 3x3)');
+        helpMsg.push('  - Examples:');
+        helpMsg.push('    • !mine tunnel north 50');
+        helpMsg.push('    • !mine tunnel south 30 4 3  (width=4, height=3)');
         helpMsg.push('!mine stop - Stop mining');
         helpMsg.push('!mine status - Show progress');
         helpMsg.push('Directions: north, south, east, west');
@@ -356,11 +371,9 @@ export default class ChatCommandHandler {
         helpMsg.push(`Commands: ${cmds}`);
       }
       
-      // Always send help via whisper to avoid spam
-      helpMsg.forEach(line => this.bot.whisper(username, line));
-      if (!isPrivate) {
-        this.reply(username, 'Check private messages for help!', isPrivate);
-      }
+      // Always send help via whisper to avoid public spam; throttle to avoid kicks
+      await this._sendLines(username, helpMsg, true, 350);
+      if (!isPrivate) this.reply(username, 'Check private messages for help!', isPrivate);
     });
 
     this.register('whoami', (username, args, isPrivate) => {
@@ -972,28 +985,63 @@ export default class ChatCommandHandler {
                     break;
                 }
                 
-                case 'tunnel': {
-                    // !mine tunnel <direction> <length>
-                    // Example: !mine tunnel north 50
-                    const direction = args[1] || 'east';
-                    const length = parseInt(args[2]) || 100;
-                    
-                    this.bot.chat(`Starting tunnel: ${direction}, ${length}m`);
-                    
-                    if (!this.behaviors.mining.enabled && typeof this.behaviors.mining.enable === 'function') {
-                        this.behaviors.mining.enable();
-                    }
-                    
-                    const startPos = this.bot.entity.position.floored();
-                    await this.behaviors.mining.startTunnel(startPos, direction, length);
-                    this.bot.chat("Tunnel complete!");
-                    break;
-                }
+        case 'tunnel': {
+          // !mine tunnel <direction> <length> [width] [height]
+          // Examples: !mine tunnel north 50
+          //           !mine tunnel south 30 4 3
+          const direction = args[1] || 'east';
+          const length = parseInt(args[2]) || 100;
+          const widthArg = args[3];
+          const heightArg = args[4];
+          const width = widthArg !== undefined ? parseInt(widthArg) : null;
+          const height = heightArg !== undefined ? parseInt(heightArg) : null;
+
+          const dimsText = (Number.isFinite(width) && Number.isFinite(height))
+            ? `, ${width}x${height}`
+            : '';
+          this.bot.chat(`Starting tunnel: ${direction}, ${length}m${dimsText}`);
+
+          if (!this.behaviors.mining.enabled && typeof this.behaviors.mining.enable === 'function') {
+            this.behaviors.mining.enable();
+          }
+
+          const startPos = this.bot.entity.position.floored();
+          await this.behaviors.mining.startTunnel(startPos, direction, length, Number.isFinite(width) ? width : null, Number.isFinite(height) ? height : null);
+          this.bot.chat("Tunnel complete!");
+          break;
+        }
                 
                 case 'quarry': {
                     this.bot.chat("Quarry mode not yet implemented");
                     break;
                 }
+                
+        case 'deposit': {
+          // Request a deposit after the current mining task finishes.
+          if (!this.behaviors.mining) {
+            this.bot.chat("Mining behavior not available");
+            break;
+          }
+          if (this.behaviors.mining.isWorking) {
+            this.behaviors.mining.depositAfterCompletion = true;
+            const kb = this.behaviors.mining?.settings?.keepBridgingTotal ?? 64;
+            const kf = this.behaviors.mining?.settings?.keepFoodMin ?? 16;
+            this.bot.chat(`Will deposit after mining completes (keeping tools, up to ${kb} bridging blocks, and at least ${kf} food).`);
+          } else {
+            // If idle, perform an immediate deposit once with keep rules.
+            try {
+              // Reuse behavior's internal deposit routine by toggling flag and triggering a no-op plan end path
+              this.behaviors.mining.depositAfterCompletion = true;
+              // Directly invoke the post-completion branch by calling the plan executor on empty plan
+              this.behaviors.mining.miningPlan = [];
+              await this.behaviors.mining._executeMiningPlan();
+              this.bot.chat("Deposited inventory (kept essentials).");
+            } catch (e) {
+              this.bot.chat(`Deposit failed: ${e.message || e}`);
+            }
+          }
+          break;
+        }
                 
                 case 'stop': {
                     // Force stop mining
@@ -1022,9 +1070,10 @@ export default class ChatCommandHandler {
                 }
 
                 default:
-                    this.bot.chat("Usage: !mine <strip|tunnel|quarry|stop|status>");
-                    this.bot.chat("Strip: !mine strip <direction> [mainLength] [numBranches]");
-                    this.bot.chat("Tunnel: !mine tunnel <direction> [length]");
+        this.bot.chat("Usage: !mine <strip|tunnel|quarry|deposit|stop|status>");
+          this.bot.chat("Strip: !mine strip <direction> [mainLength] [numBranches]");
+        this.bot.chat("Tunnel: !mine tunnel <direction> [length] [width] [height]");
+        this.bot.chat("Deposit after finish: !mine deposit");
                     this.bot.chat("Directions: north, south, east, west");
             }
         } catch (err) {

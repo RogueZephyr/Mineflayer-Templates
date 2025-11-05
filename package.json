@@ -1,6 +1,6 @@
 {
   "name": "mineflayer_basicbot",
-  "version": "1.1.0",
+  "version": "1.0.2",
   "description": "Modular Minecraft bot with farming, chest management, and deposit automation",
   "license": "MIT",
   "author": "RogueZ3phyr",

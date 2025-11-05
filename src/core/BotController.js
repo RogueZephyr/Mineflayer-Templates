@@ -118,7 +118,14 @@ export default class BotController {
       this.logger.warn(`Connection ended. Reason: ${reason || 'unknown'}`);
       this.onEnd();
     });
-    this.bot.on('error', (err) => this.logger.error(`Bot error: ${err}`));
+    this.bot.on('error', (err) => {
+      // Handle PartialReadError gracefully (common with complex NBT data)
+      if (err.partialReadError || err.message?.includes('PartialReadError')) {
+        this.logger.warn(`[Protocol] Partial read error (likely NBT/inventory data) - continuing...`);
+        return;
+      }
+      this.logger.error(`Bot error: ${err}`);
+    });
     this.bot.on('disconnect', (packet) => this.logger.warn(`Disconnected: ${JSON.stringify(packet)}`));
   }
 

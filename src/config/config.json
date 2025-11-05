@@ -118,6 +118,30 @@
       "toolMinDurability": 10,
       "_toolMinDurabilityHelp": "Minimum tool durability before needing replacement",
       
+      "_obstacleHandling": "Obstacle Detection and Handling - NEW v2.0.1",
+      "handleObstacles": true,
+      "_handleObstaclesHelp": "Enables automatic detection and handling of holes, water, and lava",
+      
+      "bridgeGaps": true,
+      "_bridgeGapsHelp": "Automatically bridge gaps/holes to maintain Y level",
+      
+      "coverWater": true,
+      "_coverWaterHelp": "Cover water pockets with blocks to allow safe passage",
+      
+      "coverLava": true,
+      "_coverLavaHelp": "Cover lava pockets with blocks to prevent damage",
+      
+      "bridgingMaterials": ["cobblestone", "cobbled_deepslate", "dirt", "andesite", "diorite", "granite", "netherrack"],
+      "_bridgingMaterialsHelp": "Preferred materials for bridging (in priority order). Bot will use cobblestone first if available, then dirt, etc.",
+      
+      "maxBridgeDistance": 5,
+      "_maxBridgeDistanceHelp": "Maximum distance (blocks) the bot will bridge in one go",
+      
+      "keepBridgingTotal": 64,
+      "_keepBridgingTotalHelp": "Total blocks of bridging materials to keep across all types (e.g., 64 = one stack)",
+      "keepFoodMin": 16,
+      "_keepFoodMinHelp": "Minimum edible items to keep after deposit",
+      
       "_safetySettings": "Safety Features (PLACEHOLDER - NOT YET IMPLEMENTED)",
       "checkLightLevel": false,
       "minLightLevel": 8,
