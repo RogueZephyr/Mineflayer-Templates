@@ -1,14 +1,4 @@
 {
-  "farm": {
-    "start": {
-      "x": 696,
-      "y": 62,
-      "z": 537
-    },
-    "end": {
-      "x": 618,
-      "y": 62,
-      "z": 513
-    }
-  }
+  "description": "Work areas for bots (farm, wood, quarry). Set using setarea commands.",
+  "areas": {}
 }
