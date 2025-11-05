@@ -6,6 +6,8 @@
 
 This is the first official public release of Mineflayer BasicBot, a fully-featured, modular Minecraft bot built with Mineflayer.
 
+> **Note:** Version 1.0.0 marks the first public, open source release. Previous version numbers (e.g., 1.1.0) were used during private development and are not part of the public release history.
+
 #### ✨ Core Features
 - **Multi-Bot Coordination** - Spawn and manage multiple bots with staggered delays
 - **Whitelist Permission System** - Per-bot and per-command access control

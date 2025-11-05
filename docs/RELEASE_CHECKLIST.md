@@ -131,11 +131,12 @@ For urgent fixes:
 
 2. Fix the issue
 3. Update CHANGELOG.md
-4. Bump patch version
+4. Bump patch version (e.g., 1.0.0 → 1.0.1)
 5. Commit and tag
    ```bash
    git commit -m "Hotfix: description"
-   git tag -a vX.Y.Z+1 -m "Hotfix version X.Y.Z+1"
+   git tag -a vX.Y.(Z+1) -m "Hotfix version X.Y.(Z+1)"
+   # Example: git tag -a v1.0.1 -m "Hotfix version 1.0.1"
    ```
 
 6. Merge back to main
@@ -143,7 +144,8 @@ For urgent fixes:
    git checkout main
    git merge hotfix-X.Y.Z
    git push origin main
-   git push origin vX.Y.Z+1
+   git push origin vX.Y.(Z+1)
+   # Example: git push origin v1.0.1
    ```
 
 7. Create GitHub release for hotfix
