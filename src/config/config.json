@@ -1,47 +1,177 @@
 {
+  "_comment": "=== MINEFLAYER BOT CONFIGURATION ===",
+  
+  "_server": "Server Connection Settings",
   "host": "xxrp-smp.modrinth.gg",
   "port": 25565,
   "version": "1.21.1",
+  
+  "_general": "General Bot Settings",
   "debug": true,
   "enabledBehaviors": ["look"],
+  
   "behaviors": {
+    "_lookBehavior": "Look Behavior - Bot looks at nearby entities and players",
     "look": {
       "updateInterval": 20,
       "maxDistance": 6
     },
+    
+    "_sleepBehavior": "Sleep Behavior - Bot automatically sleeps in beds at night",
     "sleep": {
       "bedColor": "blue"
     },
+    
+    "_eatBehavior": "Eat Behavior - Bot automatically eats when food level is low",
     "eat": {
       "minFood": 16
     },
+    
+    "_farmingBehavior": "Farming Behavior - Bot automatically harvests and replants crops",
     "farming": {
-        "enabled": true,
-        "scanInterval": 1000,
-        "crops": [
-            "wheat",
-            "carrots",
-            "potatoes"
-        ]
-  },
-  "itemCollector": {
-    "autoStart": true,
-    "type": "farm",
-    "intervalMs": 10000,
-    "radius": 8
+      "enabled": true,
+      "scanInterval": 1000,
+      "crops": ["wheat", "carrots", "potatoes"]
     },
+    
+    "_itemCollector": "Item Collector - Bot automatically picks up nearby items",
+    "itemCollector": {
+      "autoStart": true,
+      "type": "farm",
+      "intervalMs": 10000,
+      "radius": 8
+    },
+    
+    "_woodcuttingBehavior": "Woodcutting Behavior - Bot harvests trees, pillars up tall trees, replants saplings",
     "woodcutting": {
+      "_general": "General Woodcutting Settings",
       "enabled": true,
       "replantSaplings": true,
       "depositThreshold": 128,
-      "searchRadius": 50
+      "searchRadius": 50,
+      
+      "_pillarSettings": "Pillar/Scaffold Settings - Blocks used for climbing tall trees",
+      "scaffoldBlocks": ["dirt", "cobblestone"],
+      "cleanupScaffold": true,
+      "maxTrunkHeight": 32,
+      
+      "_timingSettings": "Timing Settings (milliseconds) - Adjust these for server latency/performance issues",
+      "_timingHelp": "Increase values if bot has placement issues, misses blocks, or server has high latency",
+      
+      "pillarPreDelayMs": 250,
+      "_pillarPreDelayHelp": "Wait time before placing pillar block (ensures bot is centered). Default: 150ms",
+      
+      "pillarJumpDelayMs": 50,
+      "_pillarJumpDelayHelp": "Delay while jumping before placing block (gives time for jump to register). Default: 100ms",
+      
+      "pillarPlaceDelayMs": 50,
+      "_pillarPlaceDelayHelp": "Wait after placing pillar block before moving up. Default: 100ms",
+      
+      "pillarMoveDelayMs": 80,
+      "_pillarMoveDelayHelp": "Delay between each of the 3 pillar steps when climbing. Default: 80ms",
+      
+      "baseBreakDelayMs": 250,
+      "_baseBreakDelayHelp": "Wait after breaking base log (longer to let drops spawn). Default: 250ms",
+      
+      "logBreakDelayMs": 100,
+      "_logBreakDelayHelp": "Delay between breaking individual logs. Default: 100ms",
+      
+      "cleanupDigDelayMs": 80,
+      "_cleanupDigDelayHelp": "Wait between digging each scaffold block during cleanup. Default: 80ms"
+    },
+
+    "_miningBehavior": "Mining Behavior - Bot mines in various patterns (strip-mining, quarry, tunnels)",
+    "mining": {
+      "_general": "General Mining Settings",
+      "enabled": true,
+      "depositThreshold": 320,
+      "_depositThresholdHelp": "Number of items before returning to deposit (320 = 5 stacks)",
+      
+      "returnOnFullInventory": true,
+      "_returnOnFullInventoryHelp": "If true, bot returns to chest when inventory is full",
+      
+      "_stripMiningSettings": "Strip Mining Mode - Main tunnel with side branches",
+      "stripMainTunnelHeight": 2,
+      "stripMainTunnelWidth": 1,
+      "stripBranchSpacing": 3,
+      "_stripBranchSpacingHelp": "Blocks between each side branch (3 leaves 2 blocks between branches for ore visibility)",
+      
+      "stripBranchLength": 32,
+      "_stripBranchLengthHelp": "Length of each side branch",
+      
+      "_quarrySettings": "Quarry Mode - Square area excavation (NOT YET IMPLEMENTED)",
+      "quarryLayerHeight": 1,
+      "quarryStairwayInterval": 10,
+      "_quarryHelp": "Quarry mode is a placeholder for future implementation",
+      
+      "_tunnelSettings": "Tunnel Mode - Long directional tunnel",
+      "tunnelHeight": 2,
+      "tunnelWidth": 2,
+      "_tunnelHelp": "Creates a 2x2 tunnel in specified direction",
+      
+      "_torchSettings": "Torch Placement (PLACEHOLDER - NOT YET IMPLEMENTED)",
+      "torchInterval": 8,
+      "autoPlaceTorches": false,
+      "_torchHelp": "Automatic torch placement at intervals - future implementation",
+      
+      "_toolManagement": "Tool Management Settings",
+      "toolMinDurability": 10,
+      "_toolMinDurabilityHelp": "Minimum tool durability before needing replacement",
+      
+      "_safetySettings": "Safety Features (PLACEHOLDER - NOT YET IMPLEMENTED)",
+      "checkLightLevel": false,
+      "minLightLevel": 8,
+      "_safetyHelp": "Light level checks and mob avoidance - future implementation"
     }
   },
+  
+  "_pathCache": "Path Caching System - Reduces lag by caching frequently used routes",
   "pathCache": {
     "maxCacheSize": 100,
+    "_maxCacheSizeHelp": "Maximum number of cached paths to store",
+    
     "pathValidityRadius": 5,
+    "_pathValidityRadiusHelp": "Radius (blocks) to check for changes that invalidate cached paths",
+    
     "cacheExpiration": 300000,
-    "minPathLength": 10
+    "_cacheExpirationHelp": "Time (ms) before cached paths expire (300000 = 5 minutes)",
+    
+    "minPathLength": 10,
+    "_minPathLengthHelp": "Minimum path length to cache (shorter paths not worth caching)"
   },
-  "dashboard": { "enabled": true, "port": 3000 }
+  
+  "_whisperPatterns": "Whisper Pattern Detection - Enables bot to respond to whispers from different chat plugins",
+  "whisperPatterns": [
+    {
+      "name": "custom_plugin",
+      "enabled": true,
+      "pattern": "^\\[.+?\\]<Player>\\s+(.+?)\\s+whispers to you:\\s+(.+)$",
+      "usernameGroup": 1,
+      "messageGroup": 2,
+      "_help": "Custom plugin format: [Plugin]<Player> Username whispers to you: Message"
+    },
+    {
+      "name": "vanilla_style",
+      "enabled": true,
+      "pattern": "^(.+?)\\s+whispers to you:\\s+(.+)$",
+      "usernameGroup": 1,
+      "messageGroup": 2,
+      "_help": "Vanilla format: Username whispers to you: Message"
+    },
+    {
+      "name": "essentials",
+      "enabled": true,
+      "pattern": "^\\[(.+?)\\s+->\\s+.+?\\]\\s+(.+)$",
+      "usernameGroup": 1,
+      "messageGroup": 2,
+      "_help": "Essentials plugin format: [Username -> You] Message"
+    }
+  ],
+  
+  "_dashboard": "Web Dashboard - Optional web interface for monitoring bot status",
+  "dashboard": {
+    "enabled": true,
+    "port": 3000,
+    "_help": "Access dashboard at http://localhost:3000 when enabled"
+  }
 }

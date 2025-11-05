@@ -22,6 +22,7 @@ Features multi-bot coordination, whitelist permissions, graceful shutdown, farmi
 
 ### 💬 Communication
 - **Whisper support** - Commands work via `/msg` (no chat spam!)
+- **Custom whisper formats** - Configurable patterns for different server plugins
 - **Bot-targeted commands** - Direct commands to specific bots
 - **Smart replies** - Bots reply via whisper when whispered to
 - **Debug system** - Module-specific debug logging
@@ -46,6 +47,22 @@ Features multi-bot coordination, whitelist permissions, graceful shutdown, farmi
 - **Multi-bot coordination** - Bots divide woodcutting areas and claim trees
 - **Auto-deposit** - Stores logs when inventory reaches threshold (2+ stacks)
 
+### ⛏️ Mining Automation
+- **Strip mining** - Main tunnel with alternating side branches for optimal ore visibility
+- **Tunnel mining** - Create 2x2 directional tunnels (north/south/east/west)
+- **Smart tool management** - Automatically switches between pickaxe (stone) and shovel (dirt)
+- **Inventory management** - Auto-deposits materials when inventory fills
+- **Progress tracking** - Real-time status and block count
+- **Configurable patterns** - Adjust branch spacing, tunnel dimensions, and deposit thresholds
+
+### 🔧 Intelligent Tool System
+- **Automatic tool selection** - Identifies optimal tool for any block (200+ block types mapped)
+- **Mid-task tool switching** - Seamlessly changes tools when encountering different blocks
+- **Durability management** - Tracks tool wear and avoids using broken tools
+- **Tool priority system** - Always uses best available (netherite → diamond → iron → stone → golden → wooden)
+- **Comprehensive mapping** - Pickaxes, axes, shovels, hoes, shears, and swords
+- **Universal integration** - Works across all behaviors (mining, woodcutting, farming)
+
 ### 🧠 Advanced Behaviors
 - **Path Caching** - 99% faster pathfinding for repeated routes, prevents lag/timeouts
 - **Pathfinding** - Full pathfinder integration with collision avoidance
@@ -68,6 +85,8 @@ Mineflayer_BasicBot/
 │   │   └── ConfigLoader.js           # Configuration management
 │   ├── behaviors/
 │   │   ├── FarmBehavior.js           # Automated farming with work zones
+│   │   ├── WoodCuttingBehavior.js    # Tree harvesting with pillar climbing
+│   │   ├── MiningBehavior.js         # Strip mining, tunneling, and quarry
 │   │   ├── ItemCollectorBehavior.js  # Smart item collection
 │   │   ├── HomeBehavior.js           # Home management and graceful logout
 │   │   ├── LookBehavior.js           # Priority-based entity tracking
@@ -77,6 +96,9 @@ Mineflayer_BasicBot/
 │   │   └── InventoryBehavior.js      # Inventory utilities
 │   ├── utils/
 │   │   ├── ChatCommandHandler.js     # Command registry with permissions
+│   │   ├── ToolHandler.js            # Intelligent tool selection and management
+│   │   ├── PillarBuilder.js          # Reusable vertical climbing utility
+│   │   ├── PathfindingUtil.js        # Centralized pathfinding with caching
 │   │   ├── WhitelistManager.js       # Player permission system
 │   │   ├── DebugTools.js             # Module-specific debugging
 │   │   └── logger.js                 # Logging utilities
@@ -130,6 +152,23 @@ Mineflayer_BasicBot/
 - `wood start` - Begin automated woodcutting
 - `wood stop` - Stop woodcutting
 
+### Mining
+- `mine strip <direction> [mainLength] [numBranches]` - Start strip mining
+  - Example: `mine strip east 100 10`
+- `mine tunnel <direction> [length]` - Create 2x2 tunnel
+  - Example: `mine tunnel north 50`
+- `mine stop` - Stop current mining operation
+- `mine status` - Show mining progress and stats
+- Directions: north, south, east, west
+
+### Tool Management
+- `tools status` - Quick tool inventory count
+- `tools report` - Detailed tool durability report
+- `tools check <type>` - Check for specific tool (pickaxe/axe/shovel/hoe)
+- `tools equip <blockName>` - Manually equip best tool for block
+  - Example: `tools equip stone`
+- **Note:** Bot automatically switches tools during mining and woodcutting!
+
 ### Item Management
 - `collect once` - Collect nearby items once
 - `collect start` - Auto-collect items continuously
@@ -152,6 +191,8 @@ Mineflayer_BasicBot/
 - `cache stats` - Show path cache statistics (master only)
 - `cache debug` - Show detailed cache info (master only)
 - `cache clear` - Clear path cache (master only)
+- `whisper list` - List active whisper patterns (master only)
+- `whisper test <text>` - Test whisper pattern matching (master only)
 
 ### 🎯 Targeting Specific Bots
 Commands can target specific bots by including the bot name:
@@ -252,6 +293,42 @@ Press **Ctrl+C** to:
 # Option 2: Opportunistic mode (no area set)
 # Bot will search for and harvest nearest trees
 /msg RogueW0lfy wood start
+```
+
+### Setting Up Mining
+```bash
+# Strip mining - main tunnel with side branches
+# Goes 100 blocks east with 10 branches (5 per side)
+/msg RogueW0lfy mine strip east 100 10
+
+# Tunnel mining - create a 2x2 tunnel
+# Creates 50-block tunnel heading north
+/msg RogueW0lfy mine tunnel north 50
+
+# Check mining progress
+/msg RogueW0lfy mine status
+
+# Stop mining
+/msg RogueW0lfy mine stop
+```
+
+### Tool Management
+```bash
+# Check what tools are available
+/msg RogueW0lfy tools status
+
+# Get detailed durability report
+/msg RogueW0lfy tools report
+
+# Check for specific tool type
+/msg RogueW0lfy tools check pickaxe
+
+# Manually equip best tool for a block
+/msg RogueW0lfy tools equip diamond_ore
+
+# Note: Bot automatically switches tools during tasks!
+# Mining: pickaxe for stone, shovel for dirt
+# Woodcutting: always uses best available axe
 ```
 
 ### Multi-Bot Farming
@@ -398,6 +475,37 @@ The bot automatically caches successful pathfinding routes, dramatically reducin
 
 See [PATH_CACHING.md](docs/PATH_CACHING.md) for detailed documentation.
 
+### Custom Whisper Pattern Support
+The bot supports multiple whisper message formats for different server plugins:
+
+**Supported Formats:**
+- Custom plugins: `[BotName]<Player> Username whispers to you: message`
+- Vanilla style: `Username whispers to you: message`
+- Essentials: `[Username -> BotName] message`
+
+**Configuration** (`config.json`):
+```json
+{
+  "whisperPatterns": [
+    {
+      "name": "custom_plugin",
+      "enabled": true,
+      "pattern": "^\\[.+?\\]<Player>\\s+(.+?)\\s+whispers to you:\\s+(.+)$",
+      "usernameGroup": 1,
+      "messageGroup": 2
+    }
+  ]
+}
+```
+
+**Testing:**
+```bash
+/msg BotName whisper list                    # View active patterns
+/msg BotName whisper test [YourFormat here]  # Test pattern matching
+```
+
+See [WHISPER_PATTERNS.md](docs/WHISPER_PATTERNS.md) for detailed documentation.
+
 ---
 
 ## 📝 Notes
@@ -407,6 +515,19 @@ See [PATH_CACHING.md](docs/PATH_CACHING.md) for detailed documentation.
 - **Whispers**: Preferred method for commands (no chat spam)
 - **Bot Names**: Must match entries in `data/botNames.json`
 - **Graceful Shutdown**: Always use Ctrl+C to shutdown properly
+
+---
+
+## 📋 Version History
+
+### Version 2.0.0 - Current
+- ✅ Intelligent ToolHandler system with automatic tool switching
+- ✅ Mining behavior with strip mining and tunneling
+- ✅ Enhanced woodcutting with pillar climbing
+- ✅ Comprehensive documentation and help system
+- ✅ Full backward compatibility with fallback mechanisms
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed refactoring history and migration guide.
 
 ---
 

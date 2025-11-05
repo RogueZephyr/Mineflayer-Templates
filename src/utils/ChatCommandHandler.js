@@ -12,16 +12,20 @@ import WhitelistManager from './WhitelistManager.js';
 const cmdPrefix = '!';
 
 export default class ChatCommandHandler {
-  constructor(bot, master, behaviors = {}) {
+  constructor(bot, master, behaviors = {}, config = {}) {
     this.bot = bot;
     this.master = master;
     this.behaviors = behaviors;
     this.logger = new Logger();
     this.commands = new Map();
+    this.config = config;
     
     // Whitelist manager for player permissions
     this.whitelist = new WhitelistManager(master);
     this.bot.whitelist = this.whitelist;
+
+    // Compile whisper patterns from config
+    this.whisperPatterns = this._compileWhisperPatterns(config.whisperPatterns || []);
 
     // Core systems
     // support modules that export default OR named export
@@ -65,7 +69,7 @@ export default class ChatCommandHandler {
       }
     });
 
-    // Private messages via /msg or /tell
+    // Private messages via /msg or /tell (standard Mineflayer event)
     this.bot.on('whisper', (username, message) => {
       try {
         this.handleMessage(username, message, true);
@@ -73,6 +77,105 @@ export default class ChatCommandHandler {
         this.logger.error(`[Chat] Error handling whisper from ${username}: ${e.message || e}`);
       }
     });
+
+    // Raw message listener for custom whisper formats
+    // Some server plugins don't trigger the 'whisper' event properly
+    this.bot._client.on('chat', (packet) => {
+      try {
+        const jsonMsg = packet.message;
+        const rawText = this._extractRawText(jsonMsg);
+        
+        if (rawText) {
+          const whisperData = this._parseCustomWhisper(rawText);
+          if (whisperData) {
+            this.logger.info(`[Whisper] Detected custom format from ${whisperData.username}: ${whisperData.message}`);
+            this.handleMessage(whisperData.username, whisperData.message, true);
+          }
+        }
+      } catch (e) {
+        // Silent fail - this is just a fallback for custom formats
+      }
+    });
+  }
+
+  // ------------------------------
+  // Whisper Pattern Helpers
+  // ------------------------------
+  
+  /**
+   * Compile whisper patterns from config into RegExp objects
+   */
+  _compileWhisperPatterns(patterns) {
+    const compiled = [];
+    
+    for (const pattern of patterns) {
+      if (!pattern.enabled) continue;
+      
+      try {
+        compiled.push({
+          name: pattern.name,
+          regex: new RegExp(pattern.pattern),
+          usernameGroup: pattern.usernameGroup || 1,
+          messageGroup: pattern.messageGroup || 2
+        });
+        this.logger.info(`[Whisper] Loaded pattern: ${pattern.name}`);
+      } catch (e) {
+        this.logger.error(`[Whisper] Failed to compile pattern '${pattern.name}': ${e.message}`);
+      }
+    }
+    
+    return compiled;
+  }
+
+  /**
+   * Extract raw text from Minecraft JSON chat message
+   */
+  _extractRawText(jsonMsg) {
+    if (typeof jsonMsg === 'string') {
+      return jsonMsg;
+    }
+    
+    if (!jsonMsg) return null;
+    
+    // Handle JSON chat format
+    let text = '';
+    
+    if (jsonMsg.text) {
+      text += jsonMsg.text;
+    }
+    
+    if (jsonMsg.extra && Array.isArray(jsonMsg.extra)) {
+      for (const part of jsonMsg.extra) {
+        if (typeof part === 'string') {
+          text += part;
+        } else if (part.text) {
+          text += part.text;
+        }
+      }
+    }
+    
+    return text || null;
+  }
+
+  /**
+   * Parse custom whisper formats using configured patterns
+   */
+  _parseCustomWhisper(rawText) {
+    for (const pattern of this.whisperPatterns) {
+      const match = rawText.match(pattern.regex);
+      
+      if (match) {
+        const username = match[pattern.usernameGroup];
+        const message = match[pattern.messageGroup];
+        
+        if (username && message) {
+          this.logger.info(`[Whisper] Matched pattern '${pattern.name}': ${username} -> ${message}`);
+          return { username, message };
+        }
+      }
+    }
+    
+    return null;
   }
 
   // Helper method to reply (whisper if private, chat if public)
@@ -194,10 +297,58 @@ export default class ChatCommandHandler {
         'Movement: come, goto, follow, stop',
         'Home: sethome [x y z], home, ishome',
         'Actions: eat, sleep, farm, wood, collect',
-        'Utility: loginv, drop, deposit, debug'
+        'Mining: mine <strip|tunnel|stop|status>',
+        'Tools: tools <status|report|check|equip>',
+        'Utility: loginv, drop, deposit, debug',
+        '',
+        'For detailed help: !help <command>',
+        'Examples: !help mine, !help tools'
       ];
       
-      if (playerInfo) {
+      // Detailed help for specific commands
+      const cmd = args[0]?.toLowerCase();
+      if (cmd === 'mine') {
+        helpMsg.length = 0;
+        helpMsg.push('=== Mining Commands ===');
+        helpMsg.push('!mine strip <dir> [length] [branches]');
+        helpMsg.push('  - Strip mine with side branches');
+        helpMsg.push('  - Example: !mine strip east 100 10');
+        helpMsg.push('!mine tunnel <dir> [length]');
+        helpMsg.push('  - Create 2x2 tunnel');
+        helpMsg.push('  - Example: !mine tunnel north 50');
+        helpMsg.push('!mine stop - Stop mining');
+        helpMsg.push('!mine status - Show progress');
+        helpMsg.push('Directions: north, south, east, west');
+      } else if (cmd === 'tools') {
+        helpMsg.length = 0;
+        helpMsg.push('=== Tool Commands ===');
+        helpMsg.push('!tools status - Quick tool count');
+        helpMsg.push('!tools report - Detailed durability');
+        helpMsg.push('!tools check <type> - Check for tool');
+        helpMsg.push('  - Types: pickaxe, axe, shovel, hoe');
+        helpMsg.push('!tools equip <block> - Equip for block');
+        helpMsg.push('  - Example: !tools equip stone');
+        helpMsg.push('');
+        helpMsg.push('Note: Bot auto-switches tools');
+        helpMsg.push('during mining and woodcutting!');
+      } else if (cmd === 'wood') {
+        helpMsg.length = 0;
+        helpMsg.push('=== Woodcutting Commands ===');
+        helpMsg.push('!wood start - Start woodcutting');
+        helpMsg.push('!wood stop - Stop woodcutting');
+        helpMsg.push('Optional: Set area with');
+        helpMsg.push('  !setarea wood start/end');
+      } else if (cmd === 'farm') {
+        helpMsg.length = 0;
+        helpMsg.push('=== Farming Commands ===');
+        helpMsg.push('!farm start - Start farming');
+        helpMsg.push('!farm stop - Stop farming');
+        helpMsg.push('Set area with:');
+        helpMsg.push('  !setarea farm start/end');
+      }
+      
+      if (playerInfo && !cmd) {
+        helpMsg.push('');
         helpMsg.push('--- Your Permissions ---');
         const bots = playerInfo.allowedBots.includes('*') ? 'All bots' : playerInfo.allowedBots.join(', ');
         const cmds = playerInfo.allowedCommands.includes('*') ? 'All commands' : playerInfo.allowedCommands.join(', ');
@@ -791,6 +942,203 @@ export default class ChatCommandHandler {
         }
     });
 
+    // ⛏️ Mining Commands
+    this.register('mine', async (username, args) => {
+        if (!this.behaviors.mining) {
+            this.bot.chat("Mining behavior not available");
+            return;
+        }
+
+        const sub = (args[0] || '').toLowerCase();
+
+        try {
+            switch (sub) {
+                case 'strip': {
+                    // !mine strip <direction> <mainLength> <numBranches>
+                    // Example: !mine strip east 100 10
+                    const direction = args[1] || 'east';
+                    const mainLength = parseInt(args[2]) || 100;
+                    const numBranches = parseInt(args[3]) || 10;
+                    
+                    this.bot.chat(`Starting strip mine: ${direction}, ${mainLength}m, ${numBranches} branches`);
+                    
+                    if (!this.behaviors.mining.enabled && typeof this.behaviors.mining.enable === 'function') {
+                        this.behaviors.mining.enable();
+                    }
+                    
+                    const startPos = this.bot.entity.position.floored();
+                    await this.behaviors.mining.startStripMining(startPos, direction, mainLength, numBranches);
+                    this.bot.chat("Strip mining complete!");
+                    break;
+                }
+                
+                case 'tunnel': {
+                    // !mine tunnel <direction> <length>
+                    // Example: !mine tunnel north 50
+                    const direction = args[1] || 'east';
+                    const length = parseInt(args[2]) || 100;
+                    
+                    this.bot.chat(`Starting tunnel: ${direction}, ${length}m`);
+                    
+                    if (!this.behaviors.mining.enabled && typeof this.behaviors.mining.enable === 'function') {
+                        this.behaviors.mining.enable();
+                    }
+                    
+                    const startPos = this.bot.entity.position.floored();
+                    await this.behaviors.mining.startTunnel(startPos, direction, length);
+                    this.bot.chat("Tunnel complete!");
+                    break;
+                }
+                
+                case 'quarry': {
+                    this.bot.chat("Quarry mode not yet implemented");
+                    break;
+                }
+                
+                case 'stop': {
+                    // Force stop mining
+                    this.behaviors.mining.stopMining();
+                    this.behaviors.mining.disable();
+                    
+                    // Stop pathfinder
+                    if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') {
+                        this.bot.pathfinder.setGoal(null);
+                    }
+                    
+                    this.bot.chat("Stopped mining");
+                    break;
+                }
+                
+                case 'status': {
+                    const status = this.behaviors.mining.isWorking ? 'Working' : 'Idle';
+                    const mode = this.behaviors.mining.currentMode || 'None';
+                    const progress = this.behaviors.mining.miningPlan.length > 0 
+                        ? `${this.behaviors.mining.currentPlanIndex}/${this.behaviors.mining.miningPlan.length}`
+                        : 'N/A';
+                    const blocks = this.behaviors.mining.blocksMinedThisSession || 0;
+                    
+                    this.bot.chat(`Status: ${status} | Mode: ${mode} | Progress: ${progress} | Mined: ${blocks} blocks`);
+                    break;
+                }
+
+                default:
+                    this.bot.chat("Usage: !mine <strip|tunnel|quarry|stop|status>");
+                    this.bot.chat("Strip: !mine strip <direction> [mainLength] [numBranches]");
+                    this.bot.chat("Tunnel: !mine tunnel <direction> [length]");
+                    this.bot.chat("Directions: north, south, east, west");
+            }
+        } catch (err) {
+            this.logger.error(`[ChatCommandHandler] Mining command error: ${err.message || err}`);
+            this.bot.chat(`Mining error: ${err.message || 'Unknown error'}`);
+        }
+    });
+
+    // 🔧 Tool Management Commands
+    this.register('tools', async (username, args) => {
+        if (!this.bot.toolHandler) {
+            this.bot.chat("ToolHandler not available");
+            return;
+        }
+
+        const sub = (args[0] || 'status').toLowerCase();
+
+        try {
+            switch (sub) {
+                case 'status': {
+                    const inventory = this.bot.toolHandler.getToolInventory();
+                    let response = "Tool Inventory:";
+                    
+                    for (const [toolType, tools] of Object.entries(inventory)) {
+                        if (tools.length > 0) {
+                            response += ` ${toolType}:${tools.length}`;
+                        }
+                    }
+                    
+                    this.bot.chat(response);
+                    break;
+                }
+                
+                case 'report': {
+                    const report = this.bot.toolHandler.getToolReport();
+                    this.bot.chat("=== Tool Report ===");
+                    
+                    for (const [toolType, tools] of Object.entries(report.details)) {
+                        if (tools.length > 0) {
+                            this.bot.chat(`${toolType}: ${tools.length} tools`);
+                            tools.forEach(t => {
+                                const durInfo = t.durability !== null 
+                                    ? ` (${t.percentage}% - ${t.durability} uses left)`
+                                    : '';
+                                this.bot.chat(`  - ${t.name}${durInfo}`);
+                            });
+                        }
+                    }
+                    break;
+                }
+                
+                case 'check': {
+                    // Check if bot has specific tool type
+                    const toolType = args[1];
+                    if (!toolType) {
+                        this.bot.chat("Usage: !tools check <pickaxe|axe|shovel|hoe|sword|shears>");
+                        return;
+                    }
+                    
+                    const hasTool = this.bot.toolHandler.hasTool(toolType);
+                    if (hasTool) {
+                        const tools = this.bot.toolHandler.getAvailableTools(toolType);
+                        this.bot.chat(`Yes, ${tools.length} ${toolType}(s) available`);
+                    } else {
+                        this.bot.chat(`No ${toolType} available`);
+                    }
+                    break;
+                }
+                
+                case 'equip': {
+                    // Equip best tool for a block type
+                    const blockName = args[1];
+                    if (!blockName) {
+                        this.bot.chat("Usage: !tools equip <blockName>");
+                        return;
+                    }
+                    
+                    // Find a nearby block of that type
+                    const blocks = this.bot.findBlocks({
+                        matching: (block) => block && block.name === blockName,
+                        maxDistance: 5,
+                        count: 1
+                    });
+                    
+                    if (blocks.length === 0) {
+                        this.bot.chat(`No ${blockName} found nearby`);
+                        return;
+                    }
+                    
+                    const block = this.bot.blockAt(blocks[0]);
+                    const equipped = await this.bot.toolHandler.equipBestTool(block);
+                    
+                    if (equipped) {
+                        const tool = this.bot.heldItem;
+                        this.bot.chat(`Equipped ${tool ? tool.name : 'hand'} for ${blockName}`);
+                    } else {
+                        this.bot.chat(`No suitable tool for ${blockName}`);
+                    }
+                    break;
+                }
+
+                default:
+                    this.bot.chat("Usage: !tools <status|report|check|equip>");
+                    this.bot.chat("status - Quick tool count");
+                    this.bot.chat("report - Detailed tool durability");
+                    this.bot.chat("check <type> - Check for specific tool type");
+                    this.bot.chat("equip <block> - Equip best tool for block type");
+            }
+        } catch (err) {
+            this.logger.error(`[ChatCommandHandler] Tools command error: ${err.message || err}`);
+            this.bot.chat(`Tools error: ${err.message || 'Unknown error'}`);
+        }
+    });
+
     // Debug toggles: master only
     this.register('debug', async (username, args) => {
       const sub = (args[0] || '').toLowerCase();
@@ -926,6 +1274,45 @@ export default class ChatCommandHandler {
         }
         default:
           this.bot.whisper(username, 'Usage: !cache <stats|debug|clear>');
+      }
+    });
+
+    // Whisper pattern management (master only)
+    this.register('whisper', (username, args) => {
+      if (username !== this.master) {
+        this.bot.whisper(username, 'Only master can manage whisper patterns.');
+        return;
+      }
+
+      const sub = args[0]?.toLowerCase();
+      
+      switch (sub) {
+        case 'list': {
+          this.bot.whisper(username, `=== Whisper Patterns (${this.whisperPatterns.length}) ===`);
+          this.whisperPatterns.forEach((p, i) => {
+            this.bot.whisper(username, `${i+1}. ${p.name}: ${p.regex.source.substring(0, 50)}...`);
+          });
+          break;
+        }
+        case 'test': {
+          const testText = args.slice(1).join(' ');
+          if (!testText) {
+            this.bot.whisper(username, 'Usage: !whisper test <raw text>');
+            return;
+          }
+          
+          this.bot.whisper(username, `Testing: "${testText}"`);
+          const result = this._parseCustomWhisper(testText);
+          
+          if (result) {
+            this.bot.whisper(username, `✓ Matched! User: ${result.username}, Message: ${result.message}`);
+          } else {
+            this.bot.whisper(username, '✗ No pattern matched');
+          }
+          break;
+        }
+        default:
+          this.bot.whisper(username, 'Usage: !whisper <list|test>');
       }
     });
   }

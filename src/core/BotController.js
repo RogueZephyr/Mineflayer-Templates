@@ -17,9 +17,11 @@ import FarmBehavior from '../behaviors/FarmBehavior.js';
 import ItemCollectorBehavior from '../behaviors/ItemCollectorBehavior.js';
 import HomeBehavior from '../behaviors/HomeBehavior.js';
 import WoodCuttingBehavior from '../behaviors/WoodCuttingBehavior.js';
+import MiningBehavior from '../behaviors/MiningBehavior.js';
 import SaveChestLocation from '../utils/SaveChestLocation.js';
 import DebugTools from '../utils/DebugTools.js';
 import PathfindingUtil from '../utils/PathfindingUtil.js';
+import ToolHandler from '../utils/ToolHandler.js';
 import AreaRegistry from '../state/AreaRegistry.js';
 import fs from 'fs';
 import path from 'path';
@@ -171,6 +173,11 @@ export default class BotController {
     this.areaRegistry = new AreaRegistry(this.bot);
     this.bot.areaRegistry = this.areaRegistry;
 
+    // Initialize tool handler for optimal tool selection
+    this.toolHandler = new ToolHandler(this.bot, this.logger);
+    this.bot.toolHandler = this.toolHandler;
+    this.logger.info('[BotController] ToolHandler initialized');
+
     this.behaviors.deposit = new DepositBehavior(this.bot, this.logger);
     this.bot.depositBehavior = this.behaviors.deposit;
 
@@ -243,12 +250,17 @@ export default class BotController {
     this.behaviors.woodcutting.setLookBehavior(this.behaviors.look);
     this.logger.info('WoodCuttingBehavior initialized successfully!');
 
+    // Mining behavior with look behavior integration
+    this.behaviors.mining = new MiningBehavior(this.bot, this.logger, this.master);
+    this.behaviors.mining.setLookBehavior(this.behaviors.look);
+    this.logger.info('MiningBehavior initialized successfully!');
+
     // Home behavior for graceful logout
     this.behaviors.home = new HomeBehavior(this.bot, this.logger);
     this.bot.homeBehavior = this.behaviors.home; // Make accessible via bot object
     this.logger.info('HomeBehavior initialized successfully!');
 
-    this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors);
+    this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors, this.config);
     this.logger.info('ChatCommandHandler initialized successfully!');
 
     // Set up hunger check interval (always runs, logs only in debug mode)
@@ -304,12 +316,12 @@ export default class BotController {
 
     // Don't remove all listeners as it can cause issues with reconnection
     // Just set bot to null so a new instance can be created
-    /**
+    
     this.bot = null;
 
     setTimeout(() => {
       this.start();
-    }, 10000)*/
+    }, 10000)
   }
 
   // optional: behavior registration helpers

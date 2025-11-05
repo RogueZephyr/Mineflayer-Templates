@@ -2,6 +2,7 @@
 import { Vec3 } from 'vec3';
 import pkg from 'mineflayer-pathfinder';
 const { goals } = pkg;
+import PillarBuilder from '../utils/PillarBuilder.js';
 
 export default class WoodCuttingBehavior {
   constructor(bot, logger, master) {
@@ -12,6 +13,22 @@ export default class WoodCuttingBehavior {
     this.isWorking = false;
     this.woodcuttingArea = null;
     this.lookBehavior = null;
+    
+    // Settings (can be overridden via bot.config.behaviors.woodcutting)
+    const cfg = (bot && bot.config && bot.config.behaviors && bot.config.behaviors.woodcutting) || {};
+    this.settings = {
+      scaffoldBlocks: Array.isArray(cfg.scaffoldBlocks) && cfg.scaffoldBlocks.length > 0 ? cfg.scaffoldBlocks : ['dirt', 'cobblestone'],
+      cleanupScaffold: (typeof cfg.cleanupScaffold === 'boolean') ? cfg.cleanupScaffold : true,
+      maxTrunkHeight: Number.isFinite(cfg.maxTrunkHeight) ? cfg.maxTrunkHeight : 32,
+      // Timing settings for pillar placement (adjust for server latency/performance)
+      pillarPreDelayMs: Number.isFinite(cfg.pillarPreDelayMs) ? cfg.pillarPreDelayMs : 150,
+      pillarJumpDelayMs: Number.isFinite(cfg.pillarJumpDelayMs) ? cfg.pillarJumpDelayMs : 100,
+      pillarPlaceDelayMs: Number.isFinite(cfg.pillarPlaceDelayMs) ? cfg.pillarPlaceDelayMs : 100,
+      pillarMoveDelayMs: Number.isFinite(cfg.pillarMoveDelayMs) ? cfg.pillarMoveDelayMs : 80,
+      baseBreakDelayMs: Number.isFinite(cfg.baseBreakDelayMs) ? cfg.baseBreakDelayMs : 250,
+      logBreakDelayMs: Number.isFinite(cfg.logBreakDelayMs) ? cfg.logBreakDelayMs : 100,
+      cleanupDigDelayMs: Number.isFinite(cfg.cleanupDigDelayMs) ? cfg.cleanupDigDelayMs : 80
+    };
 
     // Tree types and their corresponding saplings
     this.treeTypes = {
@@ -331,6 +348,46 @@ export default class WoodCuttingBehavior {
   }
 
   /**
+   * Build a trunk path from base upward, allowing slight horizontal shifts (e.g., acacia)
+   */
+  _buildTrunkPath(basePos) {
+    const path = [];
+    let current = basePos.clone();
+    const visited = new Set();
+    const maxSteps = this.settings.maxTrunkHeight;
+
+    for (let step = 0; step < maxSteps; step++) {
+      // Look at level one above current (next trunk segment)
+      let next = null;
+      let found = false;
+      const y = current.y + 1;
+      let bestDist = Infinity;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const p = new Vec3(current.x + dx, y, current.z + dz);
+          const k = `${p.x},${p.y},${p.z}`;
+          if (visited.has(k)) continue;
+          const b = this.bot.blockAt(p);
+          if (b && this._isLog(b)) {
+            const d = Math.abs(dx) + Math.abs(dz); // Manhattan to prefer straighter
+            if (d < bestDist) {
+              bestDist = d;
+              next = p;
+              found = true;
+            }
+          }
+        }
+      }
+
+      if (!found) break;
+      path.push(next.clone());
+      visited.add(`${next.x},${next.y},${next.z}`);
+      current = next;
+    }
+    return path;
+  }
+
+  /**
    * Get all log blocks in a tree starting from a position
    */
   _getTreeLogs(startPos, maxLogs = 100) {
@@ -376,6 +433,42 @@ export default class WoodCuttingBehavior {
   }
 
   /**
+   * Utility: is a position empty/air
+   */
+  _isAir(pos) {
+    const b = this.bot.blockAt(pos);
+    return !b || b.type === 0;
+  }
+
+  /**
+   * Select a direction (+X, -X, +Z, -Z) to build step pillar next to trunk
+   */
+  _selectPillarDirection(basePos) {
+    const dirs = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
+    for (const d of dirs) {
+      const stepPos = new Vec3(basePos.x + d.x, basePos.y, basePos.z + d.z);
+      const ground = this.bot.blockAt(new Vec3(stepPos.x, basePos.y - 1, stepPos.z));
+      const stepFree = this._isAir(stepPos);
+      const groundSolid = ground && ground.boundingBox === 'block';
+      if (stepFree && groundSolid) return d;
+    }
+    return dirs[0];
+  }
+
+  /**
+   * Choose a scaffold item to place as steps (dirt/cobble/planks/logs fallback)
+   */
+  _getScaffoldItem() {
+    const allowed = this.settings.scaffoldBlocks || [];
+    const items = this.bot.inventory.items();
+    for (const name of allowed) {
+      const it = items.find(i => i && i.name === name && i.count > 0);
+      if (it) return it;
+    }
+    return null; // do not place if none of the configured blocks are available
+  }
+
+  /**
    * Harvest a tree from top to bottom
    */
   async _harvestTree(basePos) {
@@ -389,78 +482,155 @@ export default class WoodCuttingBehavior {
       this._emitDebug('Proceeding with manual harvesting (no axe available)');
     }
     
-    // Get all logs in the tree
-    const allLogs = this._getTreeLogs(basePos);
-    if (allLogs.length === 0) {
-      this._emitDebug('No logs found in tree');
-      return false;
-    }
-
-    this._emitDebug(`Found ${allLogs.length} log blocks in tree`);
-    
-    // Sort logs by height (highest first for top-down harvesting)
-    allLogs.sort((a, b) => b.y - a.y);
+  // Determine trunk from base to top (dynamic path to handle bends)
+  const baseY = basePos.y;
+  const trunkPath = this._buildTrunkPath(basePos);
+  const topY = trunkPath.length ? trunkPath[trunkPath.length - 1].y : baseY;
     
     // Remember the log type for replanting
-    const firstLog = this.bot.blockAt(allLogs[0]);
-    const logType = firstLog ? firstLog.name : null;
+    const baseBlock = this.bot.blockAt(basePos);
+    const logType = baseBlock ? baseBlock.name : null;
     const saplingType = logType ? this.treeTypes[logType] : null;
+
+    // Center-pillar approach using PillarBuilder utility
+    const pillarX = basePos.x;
+    const pillarZ = basePos.z;
+    let pillarTopY = baseY - 1; // start from ground below base log
     
-    // Harvest all logs
-    let harvestedCount = 0;
-    for (const logPos of allLogs) {
-      if (!this.enabled || !this.isWorking) break;
-      
-      // Check if block is claimed by another bot
-      if (this.bot.coordinator && this.bot.coordinator.isBlockClaimed(logPos, this.bot.username)) {
-        continue;
-      }
-      
-      // Claim block
-      if (this.bot.coordinator) {
-        if (!this.bot.coordinator.claimBlock(this.bot.username, logPos, 'harvest')) {
-          continue;
-        }
-      }
-      
-      try {
-        // Navigate close to the log
-        await this._goto(logPos, 15000, 'harvest_log');
-        
-        const block = this.bot.blockAt(logPos);
-        if (block && this._isLog(block)) {
-          // Ensure axe is still equipped
-          if (hasAxe && this.currentAxe) {
-            try {
-              await this.bot.equip(this.currentAxe, 'hand');
-            } catch (e) {
-              this._emitDebug('Failed to equip axe, continuing anyway');
+    // Initialize pillar builder with woodcutting timing settings
+    const pillarBuilder = new PillarBuilder(this.bot, this.logger, {
+      allowedBlocks: this.settings.scaffoldBlocks,
+      preDelayMs: this.settings.pillarPreDelayMs,
+      jumpDelayMs: this.settings.pillarJumpDelayMs,
+      placeDelayMs: this.settings.pillarPlaceDelayMs,
+      moveDelayMs: this.settings.pillarMoveDelayMs,
+      maxConsecutiveFailures: 5,
+      failureRetryDelayMs: 250
+    });
+
+    // Helper: break any reachable remaining trunk logs from current position
+    const breakReachableLogs = async () => {
+      let brokeAny = false;
+      for (const p of trunkPath) {
+        const b = this.bot.blockAt(p);
+        if (!b || !this._isLog(b)) continue;
+        const dist = this.bot.entity.position.distanceTo(p);
+        if (dist <= 4.9) {
+          try {
+            // Use ToolHandler for smart tool selection if available
+            if (this.bot.toolHandler) {
+              await this.bot.toolHandler.smartDig(b);
+            } else {
+              // Fallback to manual axe method
+              if (hasAxe && this.currentAxe) await this.bot.equip(this.currentAxe, 'hand');
+              await this.bot.dig(b);
             }
+            harvestedCount++;
+            brokeAny = true;
+            await new Promise(r => setTimeout(r, this.settings.logBreakDelayMs));
+          } catch (e) {
+            // ignore per-block failures
           }
-          
-          await this.bot.dig(block);
-          harvestedCount++;
-          await new Promise(r => setTimeout(r, 150));
-        }
-      } catch (e) {
-        this._emitDebug(`Failed to harvest log at ${logPos.x}, ${logPos.y}, ${logPos.z}:`, e.message);
-      } finally {
-        // Release claim
-        if (this.bot.coordinator) {
-          this.bot.coordinator.releaseBlock(logPos);
         }
       }
+      return brokeAny;
+    };
+
+    let harvestedCount = 0;
+
+    try {
+      // Move near base
+      await this._goto(basePos, 12000, 'wood_base');
+
+      // 1) Break base log from the side
+      const baseLog = this.bot.blockAt(basePos);
+      if (baseLog && this._isLog(baseLog)) {
+        // Use ToolHandler for smart tool selection if available
+        if (this.bot.toolHandler) {
+          await this.bot.toolHandler.smartDig(baseLog);
+        } else {
+          // Fallback to manual axe method
+          if (hasAxe && this.currentAxe) await this.bot.equip(this.currentAxe, 'hand');
+          await this.bot.dig(baseLog);
+        }
+        harvestedCount++;
+        await new Promise(r => setTimeout(r, this.settings.baseBreakDelayMs));
+      }
+
+      // 2) Break the first 5 logs (base already broken counts as first)
+      const firstFiveTargets = trunkPath.filter(p => p.y >= baseY && p.y <= baseY + 4);
+      for (const p of firstFiveTargets) {
+        const b = this.bot.blockAt(p);
+        if (!b || !this._isLog(b)) continue;
+        const dist = this.bot.entity.position.distanceTo(p);
+        if (dist > 4.9) {
+          // reposition near base to improve reach without placing steps
+          await this._goto(new Vec3(basePos.x, basePos.y + 1, basePos.z), 6000, 'reposition_base');
+        }
+        const blockNow = this.bot.blockAt(p);
+        if (blockNow && this._isLog(blockNow)) {
+          try {
+            // Use ToolHandler for smart tool selection if available
+            if (this.bot.toolHandler) {
+              await this.bot.toolHandler.smartDig(blockNow);
+            } else {
+              // Fallback to manual axe method
+              if (hasAxe && this.currentAxe) await this.bot.equip(this.currentAxe, 'hand');
+              await this.bot.dig(blockNow);
+            }
+            harvestedCount++;
+            await new Promise(r => setTimeout(r, this.settings.logBreakDelayMs));
+          } catch (_) {}
+        }
+      }
+
+      // 3) If tree taller than 5 logs, move to base column, pillar up 3 at a time, and attempt to finish
+      const remainingExists = () => trunkPath.some(p => {
+        const b = this.bot.blockAt(p);
+        return b && this._isLog(b);
+      });
+
+      if (remainingExists()) {
+        // Ensure we're centered on the trunk column
+        await this._goto(new Vec3(pillarX, pillarTopY + 1, pillarZ), 8000, 'center_on_trunk');
+        // small settle delay before starting pillar
+        try { await new Promise(r => setTimeout(r, this.settings.pillarPreDelayMs)); } catch {}
+      }
+
+      // Repeat: break reachable, then climb 3, until no logs left
+      while (this.enabled && this.isWorking && remainingExists()) {
+        await breakReachableLogs();
+        if (!remainingExists()) break;
+
+        // Use pillar builder to climb 3 steps
+        const pillarColumn = new Vec3(pillarX, 0, pillarZ);
+        const result = await pillarBuilder.buildUp(pillarColumn, pillarTopY, 3);
+        
+        if (result.success) {
+          pillarTopY = result.finalY;
+          this._emitDebug(`Climbed ${result.stepsPlaced} steps, now at Y=${pillarTopY}`);
+        } else {
+          this._emitDebug('Failed to build pillar steps');
+        }
+      }
+    } catch (e) {
+      this._emitDebug('Harvest loop error:', e.message);
     }
+
+    this._emitDebug(`Harvested ${harvestedCount} logs (bottom-up)`);
     
-    this._emitDebug(`Harvested ${harvestedCount} logs`);
-    
-    // Try to replant sapling at base
+    // Optional: cleanup placed steps using pillar builder
+    if (this.settings.cleanupScaffold) {
+      await pillarBuilder.cleanup(this.settings.cleanupDigDelayMs);
+    }
+
+    // Replant only after entire tree and cleanup
     if (saplingType && this._canPlantSapling(basePos)) {
       await this._replantSapling(basePos, saplingType);
     }
-    
+
     // Collect dropped items
-    await this._collectNearbyItems(basePos, 5);
+    await this._collectNearbyItems(basePos, 6);
     
     return harvestedCount > 0;
   }
