@@ -217,6 +217,8 @@ Without a bot name, all bots respond:
 
 ## 🚀 Quick Start
 
+> **New to the project?** Check out our comprehensive [Getting Started Guide](GETTING_STARTED.md) for step-by-step instructions!
+
 ### Installation
 ```bash
 npm install
