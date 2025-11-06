@@ -1,5 +1,6 @@
 // src/utils/ChatCommandHandler.js
 import chalk from 'chalk';
+import { Vec3 } from 'vec3';
 import Logger from './logger.js';
 // import PathfinderBehavior from '../behaviors/PathfinderBehavior.js';
 import * as PathfinderBehaviorModule from '../behaviors/PathfinderBehavior.js';
@@ -1012,7 +1013,48 @@ export default class ChatCommandHandler {
         }
                 
                 case 'quarry': {
-                    this.bot.chat("Quarry mode not yet implemented");
+                    // !mine quarry <x1> <z1> <x2> <z2> <depth>
+                    // Example: !mine quarry 100 200 120 220 10
+                    // Digs a rectangular area from (x1,z1) to (x2,z2), going down 10 layers
+                    
+                    if (args.length < 6) {
+                        this.bot.chat("Usage: !mine quarry <x1> <z1> <x2> <z2> <depth>");
+                        this.bot.chat("Example: !mine quarry 100 200 120 220 10");
+                        break;
+                    }
+                    
+                    const x1 = parseInt(args[1]);
+                    const z1 = parseInt(args[2]);
+                    const x2 = parseInt(args[3]);
+                    const z2 = parseInt(args[4]);
+                    const depth = parseInt(args[5]) || 5;
+                    
+                    if (isNaN(x1) || isNaN(z1) || isNaN(x2) || isNaN(z2) || isNaN(depth)) {
+                        this.bot.chat("Invalid coordinates or depth. All values must be numbers.");
+                        break;
+                    }
+                    
+                    if (depth <= 0) {
+                        this.bot.chat("Depth must be greater than 0");
+                        break;
+                    }
+                    
+                    const botY = Math.floor(this.bot.entity.position.y);
+                    const corner1 = new Vec3(x1, botY, z1);
+                    const corner2 = new Vec3(x2, botY, z2);
+                    
+                    const width = Math.abs(x2 - x1) + 1;
+                    const length = Math.abs(z2 - z1) + 1;
+                    
+                    this.bot.chat(`Starting quarry: ${width}x${length} area, ${depth} layers deep`);
+                    this.bot.chat(`From (${x1}, ${z1}) to (${x2}, ${z2})`);
+                    
+                    if (!this.behaviors.mining.enabled && typeof this.behaviors.mining.enable === 'function') {
+                        this.behaviors.mining.enable();
+                    }
+                    
+                    await this.behaviors.mining.startQuarry(corner1, corner2, depth);
+                    this.bot.chat("Quarry complete!");
                     break;
                 }
                 

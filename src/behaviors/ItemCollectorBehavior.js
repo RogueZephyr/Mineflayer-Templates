@@ -33,7 +33,7 @@ export default class ItemCollectorBehavior {
     // Use centralized pathfinding utility if available
     if (this.bot.pathfindingUtil) {
       try {
-        await this.bot.pathfindingUtil.goto(pos, timeoutMs, 'collect_item', 1.5);
+        await this.bot.pathfindingUtil.goto(pos, timeoutMs, 'collect_item', 0.5);
         return true;
       } catch (e) {
         this._emitDebug('pathfindingUtil failed', e.message || e);

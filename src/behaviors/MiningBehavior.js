@@ -1,6 +1,5 @@
 // src/behaviors/MiningBehavior.js
 import { Vec3 } from 'vec3';
-import PillarBuilder from '../utils/PillarBuilder.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -65,6 +64,8 @@ export default class MiningBehavior {
     digReachDistance: Number.isFinite(cfg.digReachDistance) ? cfg.digReachDistance : 5,
     // Dig retry behavior
     digRetryLimit: Number.isFinite(cfg.digRetryLimit) ? cfg.digRetryLimit : 3,
+    // Delay between dig attempt and verification read (ms)
+    digVerifyDelayMs: Number.isFinite(cfg.digVerifyDelayMs) ? cfg.digVerifyDelayMs : 150,
       
     // Deposit keep quotas
     keepBridgingTotal: Number.isFinite(cfg.keepBridgingTotal) ? cfg.keepBridgingTotal : 64,
@@ -308,7 +309,34 @@ export default class MiningBehavior {
   }
 
   /**
+   * Find all chests near a given position
+   * @param {Vec3} centerPos - Center position to search from
+   * @param {number} radius - Search radius (default 15)
+   * @returns {Array<Block>} Array of chest blocks found
+   */
+  _findNearbyChests(centerPos, radius = 15) {
+    const chests = [];
+    const searchRadius = Math.max(5, radius);
+    
+    for (let x = -searchRadius; x <= searchRadius; x++) {
+      for (let y = -5; y <= 5; y++) {
+        for (let z = -searchRadius; z <= searchRadius; z++) {
+          const checkPos = centerPos.offset(x, y, z);
+          const block = this.bot.blockAt(checkPos);
+          if (block && block.name === 'chest') {
+            chests.push(block);
+          }
+        }
+      }
+    }
+    
+    this._emitDebug(`Found ${chests.length} chest(s) within ${searchRadius} blocks of ${centerPos}`);
+    return chests;
+  }
+
+  /**
    * Deposit mined materials to chest
+   * Tries multiple chests if the first one is full
    * TODO: Implement courier handoff system
    */
   async _depositMaterials() {
@@ -324,35 +352,63 @@ export default class MiningBehavior {
       // Navigate to deposit area
       await this._goto(depositPos, 20000, 'deposit');
 
-      // Look for a chest near the deposit location
-      let chestBlock = null;
-      const searchRadius = 10;
+      // Find all nearby chests
+      const chests = this._findNearbyChests(depositPos, 15);
       
-      for (let x = -searchRadius; x <= searchRadius; x++) {
-        for (let y = -3; y <= 3; y++) {
-          for (let z = -searchRadius; z <= searchRadius; z++) {
-            const checkPos = depositPos.offset(x, y, z);
-            const block = this.bot.blockAt(checkPos);
-            if (block && block.name === 'chest') {
-              chestBlock = block;
-              break;
-            }
-          }
-          if (chestBlock) break;
-        }
-        if (chestBlock) break;
-      }
-
-      if (!chestBlock) {
+      if (chests.length === 0) {
         this._emitDebug('No chest found near deposit location - keeping materials');
         return;
       }
 
-      // Open chest and deposit all items except tools
-  const chest = await this.bot.openContainer(chestBlock);
-  await this._depositWithKeepRules(chest, { keepBridgingTotal: this.settings.keepBridgingTotal, keepFoodMin: this.settings.keepFoodMin });
-      chest.close();
-      this._emitDebug('Materials deposited successfully');
+      // Try each chest until we successfully deposit everything
+      let deposited = false;
+      for (const chestBlock of chests) {
+        try {
+          // Move closer to this specific chest
+          const chestDist = this.bot.entity.position.distanceTo(chestBlock.position);
+          if (chestDist > 4) {
+            await this._goto(chestBlock.position, 5000, 'chest_approach', 3);
+          }
+          
+          // Open chest and try to deposit
+          const chest = await this.bot.openContainer(chestBlock);
+          const itemsBefore = this.bot.inventory.items().length;
+          
+          await this._depositWithKeepRules(chest, { 
+            keepBridgingTotal: this.settings.keepBridgingTotal, 
+            keepFoodMin: this.settings.keepFoodMin 
+          });
+          
+          chest.close();
+          
+          const itemsAfter = this.bot.inventory.items().length;
+          
+          // Check if we still have items to deposit (excluding tools/essentials)
+          const hasMoreToDeposit = this._shouldDeposit();
+          
+          if (!hasMoreToDeposit || itemsAfter < itemsBefore) {
+            this._emitDebug(`Materials deposited to chest at ${chestBlock.position}`);
+            deposited = true;
+            
+            // If we still have items to deposit, try next chest
+            if (hasMoreToDeposit) {
+              this._emitDebug('Chest full, trying next chest...');
+              continue;
+            }
+            break;
+          }
+        } catch (e) {
+          this._emitDebug(`Failed to deposit to chest at ${chestBlock.position}: ${e.message}`);
+          // Try next chest
+          continue;
+        }
+      }
+      
+      if (deposited) {
+        this._emitDebug('Materials deposited successfully');
+      } else {
+        this._emitDebug('All nearby chests are full or inaccessible - keeping materials');
+      }
       
     } catch (e) {
       this._emitDebug('Failed to deposit materials:', e.message);
@@ -502,12 +558,47 @@ export default class MiningBehavior {
 
   /**
    * Generate quarry mining plan
-   * TODO: Implement layer-by-layer square excavation with stairway
+   * Creates a rectangular excavation going downward in horizontal layers
+   * @param {Vec3} corner1 - First corner of the quarry area
+   * @param {Vec3} corner2 - Opposite corner of the quarry area
+   * @param {number} depth - How many layers deep to excavate
+   * @returns {Array} Mining plan with dig actions organized by layer
    */
-  _generateQuarryPlan(corner1, corner2, depthLayers) {
-    this._emitDebug('Quarry plan generation - TODO: Not yet implemented');
-    // Placeholder for future implementation
-    return [];
+  _generateQuarryPlan(corner1, corner2, depth) {
+    // Normalize corners to get min/max bounds
+    const minX = Math.min(Math.floor(corner1.x), Math.floor(corner2.x));
+    const maxX = Math.max(Math.floor(corner1.x), Math.floor(corner2.x));
+    const minZ = Math.min(Math.floor(corner1.z), Math.floor(corner2.z));
+    const maxZ = Math.max(Math.floor(corner1.z), Math.floor(corner2.z));
+    const startY = Math.max(Math.floor(corner1.y), Math.floor(corner2.y)); // Start from higher Y
+    
+    const width = maxX - minX + 1;
+    const length = maxZ - minZ + 1;
+    const layers = Math.max(1, depth);
+    
+    this._emitDebug(`Generating quarry plan: ${width}x${length} area, ${layers} layers deep from Y=${startY}`);
+    
+    const plan = [];
+    
+    // Generate plan layer by layer, going downward
+    for (let layer = 0; layer < layers; layer++) {
+      const y = startY - layer;
+      
+      // For each layer, dig in a pattern (e.g., rows)
+      for (let z = minZ; z <= maxZ; z++) {
+        for (let x = minX; x <= maxX; x++) {
+          plan.push({
+            position: new Vec3(x, y, z),
+            action: 'dig',
+            priority: 'quarry',
+            layer: layer
+          });
+        }
+      }
+    }
+    
+    this._emitDebug(`Generated ${plan.length} dig actions for ${width}x${length}x${layers} quarry`);
+    return plan;
   }
 
   /**
@@ -535,10 +626,10 @@ export default class MiningBehavior {
     // Precompute lateral offsets (handles even/odd widths)
     const lateralOffsets = this._getLateralOffsets(tunnelWidth);
 
-    // Generate tunnel blocks layer-by-layer (bottom layer first across full length)
-    for (let h = 0; h < tunnelHeight; h++) {
-      const y = startPos.y + h;
-      for (let i = 0; i < length; i++) {
+    // Generate tunnel blocks in vertical slices (for each forward step, mine full width x height)
+    for (let i = 0; i < length; i++) {
+      for (let h = 0; h < tunnelHeight; h++) {
+        const y = startPos.y + h;
         for (const w of lateralOffsets) {
           const x = startPos.x + (dx * i) + (-dz * w);
           const z = startPos.z + (dz * i) + (dx * w);
@@ -737,6 +828,13 @@ export default class MiningBehavior {
     if (this.currentMode === 'tunnel') {
       const desiredY = this._getDesiredFloorY();
       if (pos.y !== desiredY) pos = new Vec3(pos.x, desiredY, pos.z);
+    } else if (this.currentMode === 'quarry') {
+      // In quarry mode, only place safety platforms two blocks below the bot
+      try {
+        const feetY = Math.floor(this.bot.entity.position.y);
+        const safetyY = feetY - 2;
+        if (pos.y !== safetyY) pos = new Vec3(pos.x, safetyY, pos.z);
+      } catch (_) {}
     }
 
     const material = this._getBridgingMaterial();
@@ -1029,9 +1127,148 @@ export default class MiningBehavior {
     }
   }
 
+  /**
+   * Perform a final cleanup pass over the tunnel volume to remove any missed blocks.
+   * Scans the entire planned tunnel area and digs any remaining non-air blocks.
+   * Caches missed blocks and only counts them as cleared when actually broken.
+   * @param {Array} miningPlan - The original mining plan with all positions
+   * @returns {Promise<number>} Number of blocks cleaned up
+   */
+  async _cleanupTunnelPass(miningPlan) {
+    if (!miningPlan || miningPlan.length === 0) return 0;
+    
+    this._emitDebug('Starting final cleanup pass for tunnel...');
+    
+    // Collect all unique positions from the plan
+    const positions = [];
+    const seenKeys = new Set();
+    
+    for (const action of miningPlan) {
+      if (!action || !action.position) continue;
+      const key = this._posKey(action.position);
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        positions.push(action.position);
+      }
+    }
+    
+    this._emitDebug(`Cleanup pass scanning ${positions.length} positions`);
+    
+    // Build cache of missed blocks with their keys
+    const missedBlocksMap = new Map(); // key -> { position, action, priority }
+    
+    // First pass: identify missed blocks and cache them
+    for (const pos of positions) {
+      const block = this.bot.blockAt(pos);
+      if (block && block.type !== 0 && block.name !== 'air' && block.name !== 'cave_air') {
+        const key = this._posKey(pos);
+        missedBlocksMap.set(key, { position: pos, action: 'dig', priority: 'cleanup' });
+      }
+    }
+    
+    if (missedBlocksMap.size === 0) {
+      this._emitDebug('No missed blocks found - tunnel is clean!');
+      return 0;
+    }
+    
+    this._emitDebug(`Found ${missedBlocksMap.size} missed blocks to clean up`);
+    
+    let cleaned = 0;
+    const missedBlocks = Array.from(missedBlocksMap.values());
+    const maxRetries = 2; // Allow retries per block during cleanup
+    
+    // Second pass: clean up missed blocks using the verification helper
+    for (const digAction of missedBlocks) {
+      if (!this.enabled || !this.isWorking) break;
+      
+      const key = this._posKey(digAction.position);
+      
+      // Skip if already removed from cache (verified as cleared)
+      if (!missedBlocksMap.has(key)) continue;
+      
+      // Check inventory and deposit if needed
+      if (this.settings.returnOnFullInventory && this._shouldDeposit()) {
+        this._emitDebug('Inventory full during cleanup, depositing materials...');
+        await this._depositMaterials();
+      }
+      
+      const success = await this._breakAndConfirm(digAction, { maxRetries, waitMs: this.settings.digVerifyDelayMs, approachOnRetry: true });
+      if (success) {
+        missedBlocksMap.delete(key);
+        cleaned++;
+      } else {
+        const still = this.bot.blockAt(digAction.position);
+        if (still) this._emitDebug(`Block at ${digAction.position} persisted through cleanup (${still.name})`);
+      }
+    }
+    
+    const remaining = missedBlocksMap.size;
+    if (remaining > 0) {
+      this._emitDebug(`Cleanup pass completed: removed ${cleaned} blocks, ${remaining} remaining`);
+    } else {
+      this._emitDebug(`Cleanup pass completed: removed ${cleaned} blocks - tunnel is clean!`);
+    }
+    
+    return cleaned;
+  }
+
   // ============================================================================
   // MINING EXECUTION
   // ============================================================================
+
+  /**
+   * Helper: ensure a block is actually broken before continuing.
+   * Re-attempts digging and verifies the target becomes air/cave_air within retry budget.
+   * @param {{position: Vec3, action?: string, priority?: string}} digAction
+   * @param {{ maxRetries?: number, waitMs?: number, approachOnRetry?: boolean }} opts
+   * @returns {Promise<boolean>} true if cleared; false if still present after retries or aborted
+   */
+  async _breakAndConfirm(digAction, opts = {}) {
+    if (!digAction || !digAction.position) return false;
+    if (!this.enabled || !this.isWorking) return false;
+
+    const pos = digAction.position;
+    const maxRetries = Number.isFinite(opts.maxRetries) ? opts.maxRetries : (this.settings.digRetryLimit || 3);
+    const verifyDelay = Number.isFinite(opts.waitMs) ? opts.waitMs : (this.settings.digVerifyDelayMs || 150);
+    const approachOnRetry = opts.approachOnRetry !== undefined ? !!opts.approachOnRetry : true;
+
+    for (let attempt = 1; attempt <= Math.max(1, maxRetries); attempt++) {
+      // Early-out if already cleared
+      const pre = this.bot.blockAt(pos);
+      if (!pre || pre.type === 0 || pre.name === 'air' || pre.name === 'cave_air') return true;
+
+      // On subsequent attempts, optionally move a bit closer/tighter
+      if (attempt > 1 && approachOnRetry) {
+        try {
+          const reach = Number.isFinite(this.settings.digReachDistance) ? this.settings.digReachDistance : 5;
+          const closeRange = Math.max(0.8, Math.min(1.5, reach - 0.25));
+          await this._goto(pos, 8000, 'mining_retry', closeRange);
+          await new Promise(r => setTimeout(r, 100));
+        } catch (_) {}
+      }
+
+      const didAttempt = await this._executeDig(digAction);
+      if (!didAttempt && attempt >= maxRetries) {
+        // If we didn't even attempt (e.g., aborted), bail out early
+        return false;
+      }
+
+      // Give the world a tick to update, then verify
+      if (verifyDelay > 0) await new Promise(r => setTimeout(r, verifyDelay));
+      const post = this.bot.blockAt(pos);
+      const cleared = !post || post.type === 0 || post.name === 'air' || post.name === 'cave_air';
+      if (cleared) return true;
+
+      // Not cleared yet; try again next loop
+      if (attempt < maxRetries) {
+        this._emitDebug(`Block still present at ${pos} after attempt ${attempt}; retrying`);
+      }
+    }
+
+    // All attempts exhausted
+    this._emitDebug(`Failed to clear block at ${digAction.position} after ${maxRetries} attempts`);
+    return false;
+  }
 
   /**
    * Execute a single dig action from the plan
@@ -1063,11 +1300,13 @@ export default class MiningBehavior {
     try {
       // Navigate only if outside of breaking reach; otherwise try digging from here
       const distToTarget = this.bot.entity.position.distanceTo(pos);
-      const reach = Number.isFinite(this.settings.digReachDistance) ? this.settings.digReachDistance : 5;
+      const reach = Number.isFinite(this.settings.digReachDistance) ? this.settings.digReachDistance : 6;
       if (!(Number.isFinite(distToTarget) && distToTarget <= reach)) {
         const approachRange = Math.max(1.0, Math.min(this.settings.digApproachRange, reach));
         await this._goto(pos, 10000, 'mining', approachRange);
       }
+
+      const desiredFloorY = this._getDesiredFloorY();
 
       // Right before breaking: if this block was NOT placed by the bot, scan the slice ahead
       if (!this._wasPlacedByBot(pos)) {
@@ -1170,7 +1409,6 @@ export default class MiningBehavior {
       
       // Check the floor where we're standing to maintain Y level
       // Anchor under-feet check to desired tunnel floor plane when tunneling
-      const desiredFloorY = this._getDesiredFloorY();
       const floorPos = new Vec3(
         Math.floor(this.bot.entity.position.x),
         desiredFloorY,
@@ -1204,20 +1442,11 @@ export default class MiningBehavior {
     const total = this.miningPlan.length;
     let completed = 0;
 
-    // Group plan by Y layer to ensure strict layer-by-layer execution
-    const layerMap = new Map(); // y -> action[]
-    for (const action of this.miningPlan) {
-      const y = action.position.y;
-      if (!layerMap.has(y)) layerMap.set(y, []);
-      layerMap.get(y).push(action);
-    }
-    const layers = Array.from(layerMap.entries()).sort((a, b) => a[0] - b[0]);
-
-    for (const [layerY, actions] of layers) {
-      // Build a queue for this layer
-      const queue = actions.slice();
-      const retryCounts = new Map(); // posKey -> count
-      this._emitDebug(`Processing layer Y=${layerY} (${queue.length} actions)`);
+    // If tunneling, preserve vertical slice order by executing the plan as ordered
+    if (this.currentMode === 'tunnel') {
+      const queue = this.miningPlan.slice();
+      const retryCounts = new Map();
+      this._emitDebug(`Processing tunnel plan in vertical slices (${queue.length} actions)`);
 
       while (this.enabled && this.isWorking && queue.length > 0) {
         // Deposit if needed
@@ -1226,8 +1455,54 @@ export default class MiningBehavior {
           await this._depositMaterials();
         }
 
-        const action = queue.shift();
-        const success = await this._executeDig(action);
+  const action = queue.shift();
+  const success = await this._breakAndConfirm(action);
+
+        if (success) {
+          completed++;
+        } else {
+          const key = this._posKey(action.position);
+          const tries = (retryCounts.get(key) || 0) + 1;
+          if (tries < this.settings.digRetryLimit) {
+            retryCounts.set(key, tries);
+            queue.push(action);
+            this._emitDebug(`Re-queue dig at ${key} (retry ${tries}/${this.settings.digRetryLimit - 1})`);
+          } else {
+            this._emitDebug(`Giving up on ${key} after ${tries} attempts`);
+            completed++;
+          }
+        }
+
+        if (completed % 50 === 0) {
+          const progress = ((completed / total) * 100).toFixed(1);
+          this._emitDebug(`Mining progress: ${progress}% (${completed}/${total})`);
+        }
+      }
+    } else {
+      // Default: group by Y layer to avoid gravel/sand falls and simplify reach
+      const layerMap = new Map(); // y -> action[]
+      for (const action of this.miningPlan) {
+        const y = action.position.y;
+        if (!layerMap.has(y)) layerMap.set(y, []);
+        layerMap.get(y).push(action);
+      }
+      const layers = Array.from(layerMap.entries()).sort((a, b) => a[0] - b[0]);
+
+      for (const [layerY, actions] of layers) {
+        // Build a queue for this layer
+        const queue = actions.slice();
+        const retryCounts = new Map(); // posKey -> count
+        this._emitDebug(`Processing layer Y=${layerY} (${queue.length} actions)`);
+
+        while (this.enabled && this.isWorking && queue.length > 0) {
+        // Deposit if needed
+        if (this.settings.returnOnFullInventory && this._shouldDeposit()) {
+          this._emitDebug('Inventory full, depositing materials...');
+          await this._depositMaterials();
+        }
+
+  const action = queue.shift();
+  const success = await this._breakAndConfirm(action);
 
         if (success) {
           completed++;
@@ -1249,6 +1524,7 @@ export default class MiningBehavior {
         if (completed % 50 === 0) {
           const progress = ((completed / total) * 100).toFixed(1);
           this._emitDebug(`Mining progress: ${progress}% (${completed}/${total})`);
+        }
         }
       }
     }
@@ -1342,12 +1618,106 @@ export default class MiningBehavior {
   }
 
   /**
-   * Start quarry mining
-   * TODO: Implement quarry mode
+   * Start quarry mining operation
+   * Digs a rectangular area downward in horizontal slices
+   * Deposits when inventory is ~80% full (uses existing depositThreshold setting)
    */
   async startQuarry(corner1, corner2, depth) {
-    this._emitDebug('Quarry mode - TODO: Not yet implemented');
-    this.logger.warn('[Mining] Quarry mode not yet implemented');
+    if (this.currentMode) {
+      this._emitDebug(`Cannot start quarry - already in ${this.currentMode} mode`);
+      return;
+    }
+
+    try {
+      // Enable mining state
+      this.enabled = true;
+      this.isWorking = true;
+      this.currentMode = 'quarry';
+      this.miningStartPosition = this.bot.entity.position.clone();
+      this.miningPlan = [];
+      this.blocksMinedThisSession = 0;
+
+      this._emitDebug(`Starting quarry from ${corner1} to ${corner2}, depth: ${depth}`);
+
+      // Generate quarry plan (horizontal layers going down)
+      const plan = this._generateQuarryPlan(corner1, corner2, depth);
+      this.miningPlan = plan;
+
+      if (plan.length === 0) {
+        this._emitDebug('No blocks to mine in quarry plan');
+        return;
+      }
+
+      // Apply conservative pathfinding during quarry
+      const planPositions = new Set(plan.map(a => `${a.position.x},${a.position.y},${a.position.z}`));
+      if (this.bot.pathfindingUtil && typeof this.bot.pathfindingUtil.pushConservativeDigging === 'function') {
+        this.bot.pathfindingUtil.pushConservativeDigging({
+          digCost: 50,
+          canDigPredicate: (block) => {
+            if (!block) return false;
+            const key = `${block.position.x},${block.position.y},${block.position.z}`;
+            return planPositions.has(key);
+          }
+        });
+      }
+
+      // Execute quarry layer by layer
+      let lastLayer = -1;
+      for (const digAction of plan) {
+        // Check if we should stop
+        if (!this.enabled || !this.bot.isAlive || this.currentMode !== 'quarry') {
+          this._emitDebug('Quarry operation interrupted');
+          break;
+        }
+
+        // Log progress when starting a new layer
+        if (digAction.layer !== lastLayer) {
+          this._emitDebug(`Mining layer ${digAction.layer + 1} of ${depth}`);
+          lastLayer = digAction.layer;
+        }
+
+        // Check inventory and deposit if needed (80% threshold)
+        if (this._shouldDeposit()) {
+          this._emitDebug('Inventory ~80% full, depositing...');
+          await this._depositMaterials();
+        }
+
+        // Execute this dig action with verification
+        const pos = digAction.position;
+        const block = this.bot.blockAt(pos);
+        if (!block || block.name === 'air') continue; // Already mined or air
+
+        const success = await this._breakAndConfirm(digAction, { maxRetries: this.settings.digRetryLimit, waitMs: this.settings.digVerifyDelayMs, approachOnRetry: true });
+        if (!success) this._emitDebug(`Skipping block at ${pos} after verification retries`);
+
+        // Small delay between blocks
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      // Final deposit after quarry complete
+      if (this._shouldDeposit()) {
+        this._emitDebug('Final deposit after quarry completion');
+        await this._depositMaterials();
+      }
+
+      // Cleanup pass to catch any missed blocks
+      this._emitDebug('Running cleanup pass for missed blocks...');
+      await this._cleanupTunnelPass(plan); // Reuse tunnel cleanup logic
+
+      this._emitDebug(`Quarry complete! Mined ${this.blocksMinedThisSession} blocks`);
+
+    } catch (e) {
+      this._emitDebug('Quarry operation failed:', e.message);
+      this.bot.chat(`Quarry failed: ${e.message}`);
+    } finally {
+      // Reset state
+  this.isWorking = false;
+      this.currentMode = null;
+      this.miningPlan = [];
+      if (this.bot.pathfindingUtil && typeof this.bot.pathfindingUtil.popDiggingBias === 'function') {
+        this.bot.pathfindingUtil.popDiggingBias();
+      }
+    }
   }
 
   /**
@@ -1371,6 +1741,8 @@ export default class MiningBehavior {
     this.enabled = true;
     this.isWorking = true;
     this.currentMode = 'tunnel';
+    // We'll apply conservative digging after we compute the full plan so we can restrict digging to planned blocks
+    let conservativeApplied = false;
     
     // The floor block is one block below the bot's feet
     const floorY = Math.floor(this.bot.entity.position.y - 1);
@@ -1391,9 +1763,38 @@ export default class MiningBehavior {
       // Generate mining plan with custom dimensions
       this.miningPlan = this._generateTunnelPlan(adjustedStartPos, direction, length, tunnelWidth, tunnelHeight);
       this.currentPlanIndex = 0;
+
+      // Build a set of allowed dig positions (entire planned tunnel volume)
+      const allowedSet = new Set();
+      for (const action of this.miningPlan) {
+        if (action && action.position) {
+          const p = action.position;
+          allowedSet.add(`${p.x},${p.y},${p.z}`);
+        }
+      }
+      // Apply conservative digging constrained to planned blocks only
+      try {
+        if (this.bot.pathfindingUtil && typeof this.bot.pathfindingUtil.pushConservativeDigging === 'function') {
+          const pred = (block) => {
+            if (!block || !block.position) return false;
+            const bp = block.position;
+            return allowedSet.has(`${bp.x},${bp.y},${bp.z}`);
+          };
+          conservativeApplied = this.bot.pathfindingUtil.pushConservativeDigging({ digCost: 120, canDigPredicate: pred });
+        }
+      } catch (_) { /* ignore */ }
       
       // Execute plan
       await this._executeMiningPlan();
+      
+      // Final cleanup pass to catch any missed blocks
+      if (this.enabled && this.isWorking) {
+        const cleanedCount = await this._cleanupTunnelPass(this.miningPlan);
+        if (cleanedCount > 0) {
+          this._emitDebug(`Final cleanup pass removed ${cleanedCount} missed block(s)`);
+          this.blocksMinedThisSession += cleanedCount;
+        }
+      }
       
       // Final deposit
       if (this._shouldDeposit()) {
@@ -1406,6 +1807,8 @@ export default class MiningBehavior {
       this.isWorking = false;
       this.currentTunnelWidth = null;
       this.currentTunnelHeight = null;
+      // Restore normal pathfinding dig behavior after tunneling
+      try { if (conservativeApplied && this.bot.pathfindingUtil && typeof this.bot.pathfindingUtil.popDiggingBias === 'function') this.bot.pathfindingUtil.popDiggingBias(); } catch (_) {}
       this._emitDebug('Tunnel mining stopped');
     }
   }

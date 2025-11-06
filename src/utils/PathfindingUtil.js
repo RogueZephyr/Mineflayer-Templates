@@ -14,6 +14,8 @@ export default class PathfindingUtil {
     this.coordinator = coordinator;
     this.logger = logger;
     this.pathCache = new PathCache(bot, logger, config.pathCache || {});
+    // Stack of temporary movement overrides (e.g., conservative digging during tunnel mining)
+    this._movesStack = [];
   }
 
   /**
@@ -258,6 +260,65 @@ export default class PathfindingUtil {
   clearCache() {
     this.pathCache.clear();
     this._log('Path cache cleared');
+  }
+
+  /**
+   * Temporarily make pathfinding less likely to mine blocks by increasing dig cost
+   * and optionally disabling digging entirely.
+   * Pushes current movement settings onto an internal stack and applies overrides.
+   * Call popDiggingBias() to restore.
+   * @param {Object} opts
+   * @param {number} [opts.digCost=100] - Absolute dig cost to set (higher = less digging)
+   * @param {boolean} [opts.disableDig=false] - If true, prevent pathfinder from digging at all
+   * @param {(block: any) => boolean} [opts.canDigPredicate] - Optional predicate to allow digging only when true
+   */
+  pushConservativeDigging(opts = {}) {
+    try {
+      if (!this.bot.pathfinder || !this.bot.pathfinder.movements) return false;
+      const moves = this.bot.pathfinder.movements;
+      const snapshot = {
+        digCost: typeof moves.digCost === 'number' ? moves.digCost : undefined,
+        canDig: typeof moves.canDig === 'function' ? moves.canDig : undefined
+      };
+      this._movesStack.push(snapshot);
+
+      const digCost = Number.isFinite(opts.digCost) ? opts.digCost : 100;
+      moves.digCost = digCost;
+
+      if (opts.disableDig === true) {
+        moves.canDig = () => false;
+      } else if (typeof opts.canDigPredicate === 'function') {
+        const prevCanDig = snapshot.canDig;
+        moves.canDig = (block) => {
+          const prev = typeof prevCanDig === 'function' ? prevCanDig(block) : true;
+          try { return prev && !!opts.canDigPredicate(block); } catch (_) { return false; }
+        };
+      }
+
+      this._log(`Applied conservative digging (digCost=${moves.digCost}, disableDig=${!!opts.disableDig})`);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * Restore the last pushed movement overrides related to digging.
+   * Safe to call multiple times; no-op if stack is empty.
+   */
+  popDiggingBias() {
+    try {
+      if (!this.bot.pathfinder || !this.bot.pathfinder.movements) return false;
+      if (this._movesStack.length === 0) return false;
+      const prev = this._movesStack.pop();
+      const moves = this.bot.pathfinder.movements;
+      if (prev.digCost !== undefined) moves.digCost = prev.digCost;
+      if (prev.canDig !== undefined) moves.canDig = prev.canDig;
+      this._log('Restored digging settings');
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /**

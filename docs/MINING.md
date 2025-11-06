@@ -7,10 +7,22 @@ The MiningBehavior provides modular mining strategies with inventory-aware stopp
 
 ### Implemented Features
 - **Strip Mining**: Main tunnel with alternating side branches
-- **Tunnel Mining**: Long directional 2x2 tunnels
+- **Tunnel Mining**: Long directional tunnels with configurable dimensions
+- **Quarry Mining** *(NEW)*: Rectangular area excavation in horizontal layers
+  - Coordinate-based area selection
+  - Layer-by-layer downward excavation
+  - Multi-chest deposit system with automatic fallback
+  - 80% inventory threshold for efficient operation
+  - Conservative pathfinding to prevent accidental digging
+  - Automatic cleanup pass for missed blocks
 - **Tool Management**: Automatically equips best available pickaxe via ToolHandler
 - **Inventory Management**: Auto-deposit when inventory fills up
-- **Obstacle Detection & Handling** *(NEW v2.0.1)*: 
+- **Multi-Chest Deposit System** *(NEW)*: Tries multiple chests automatically
+  - Finds all nearby chests within 15 blocks
+  - Attempts deposit to each chest in sequence
+  - Continues to next chest if current one is full
+  - Keeps mining tools, bridging materials, and food
+- **Obstacle Detection & Handling**: 
   - Detects holes, water pockets, and lava pockets
   - Automatically bridges gaps to maintain Y level
   - Covers water sources with blocks for safe passage
@@ -20,7 +32,7 @@ The MiningBehavior provides modular mining strategies with inventory-aware stopp
 - **Multi-bot Coordination**: Respects shared coordinator for multi-bot setups
 
 ### Placeholder Features (Future Implementation)
-- **Quarry Mode**: Layer-by-layer square area excavation with stairway access
+- **Stairway Access for Quarries**: Automatic stairway generation for deep quarries
 - **Torch Placement**: Automatic torch placement at configurable intervals
 - **Vein Mining**: Enhanced ore detection and contiguous vein mining
 - **Tool Restocking**: Auto-restock tools from designated chest
@@ -48,22 +60,46 @@ Creates a 100-block main tunnel heading east with 10 side branches (5 on each si
 
 #### Tunnel Mining
 ```
-!mine tunnel <direction> [length]
+!mine tunnel <direction> [length] [width] [height]
 ```
 - **direction**: north, south, east, west (required)
 - **length**: Length of tunnel in blocks (default: 100)
+- **width**: Width of tunnel in blocks (optional, default from config)
+- **height**: Height of tunnel in blocks (optional, default from config)
+
+**Examples:**
+```
+!mine tunnel north 50
+!mine tunnel south 30 4 3
+```
+Creates a tunnel heading in the specified direction with custom dimensions.
+
+#### Quarry Mining
+```
+!mine quarry <x1> <z1> <x2> <z2> <depth>
+```
+- **x1, z1**: First corner coordinates (required)
+- **x2, z2**: Opposite corner coordinates (required)
+- **depth**: Number of layers to excavate downward (required)
 
 **Example:**
 ```
-!mine tunnel north 50
+!mine quarry 100 200 120 220 10
 ```
-Creates a 50-block 2x2 tunnel heading north.
+Excavates a 21x21 block area from coordinates (100, 200) to (120, 220), going down 10 layers.
+
+**How Quarry Works:**
+- Digs in horizontal slices, layer by layer going downward
+- Automatically deposits when inventory reaches ~80% full
+- Uses multiple nearby chests with automatic fallback if first chest is full
+- Applies conservative pathfinding (only digs planned blocks)
+- Runs cleanup pass at the end to catch any missed blocks
 
 #### Other Commands
 ```
 !mine stop           # Stop current mining operation
 !mine status         # Show mining status and progress
-!mine quarry         # (Not yet implemented)
+!mine deposit        # Deposit inventory (keeps tools/essentials)
 ```
 
 ### Programmatic API
@@ -78,6 +114,11 @@ await mining.startStripMining(startPos, 'east', 100, 10);
 
 // Tunnel mining
 await mining.startTunnel(startPos, 'north', 50);
+
+// Quarry mining
+const corner1 = new Vec3(100, 64, 200);
+const corner2 = new Vec3(120, 64, 220);
+await mining.startQuarry(corner1, corner2, 10);
 
 // Stop mining
 mining.stopMining();
@@ -100,8 +141,12 @@ Located in `src/config/config.json` under `behaviors.mining`:
 - `stripBranchLength`: Length of each side branch (default: 32)
 
 ### Tunnel Settings
-- `tunnelHeight`: Height of tunnel (default: 2)
-- `tunnelWidth`: Width of tunnel (default: 2)
+- `tunnelHeight`: Height of tunnel (default: 3)
+- `tunnelWidth`: Width of tunnel (default: 3)
+
+### Quarry Settings
+- `depositThreshold`: Items before auto-deposit during quarry (default: 320 ≈ 80% of 36-slot inventory)
+- All obstacle handling settings apply to quarry operations
 
 ### Tool Management
 - `toolMinDurability`: Minimum durability before tool replacement (default: 10)
@@ -149,11 +194,33 @@ Main Tunnel (100 blocks)
 Spacing of 3 blocks ensures maximum ore visibility while minimizing excavation.
 
 ### Tunnel Mining
-Creates a 2x2 tunnel in the specified direction, ideal for:
+Creates a tunnel in the specified direction (default 3x3, configurable), ideal for:
 - Long-distance underground travel
 - Connecting mining areas
 - Rail systems
 - Exploring caves
+
+### Quarry Mining
+Excavates a rectangular area layer by layer going downward:
+```
+Layer 1: ████████████  (Complete horizontal slice)
+Layer 2: ████████████  (Next layer down)
+Layer 3: ████████████  (Continues downward)
+...
+```
+
+**Advantages:**
+- Efficient large-scale excavation
+- Clear defined area (no wandering)
+- Automatic multi-chest management
+- Deposits at 80% full (minimizes trips)
+- Perfect for creating underground rooms or quarrying resources
+
+**Best Practices:**
+- Place multiple chests near the quarry area before starting
+- Ensure bot has bridging materials (cobblestone, dirt)
+- Start from ground level and go down
+- Use reasonable depth (5-20 layers typical)
 
 ## Technical Details
 
@@ -212,12 +279,21 @@ The bot now intelligently handles obstacles encountered during mining:
 - Any other solid block (excluding tools and valuables)
 
 ### Deposit System
-When inventory reaches threshold:
+When inventory reaches threshold (especially during quarry operations):
 1. Bot navigates to deposit location (registered mining chest or start position)
-2. Searches for nearby chest (10-block radius)
-3. Deposits all non-tool items
-4. Returns to mining position
-5. Resumes mining
+2. Searches for all nearby chests (15-block radius)
+3. Attempts to deposit to first chest found
+4. If chest is full, automatically tries next chest
+5. Continues until successful deposit or all chests exhausted
+6. Keeps tools, bridging materials (up to quota), and food
+7. Returns to mining position
+8. Resumes mining
+
+**Multi-Chest Advantages:**
+- No manual chest management needed
+- Bot automatically finds best available chest
+- Continues mining even if some chests are full
+- Efficient for long quarry operations
 
 ## Integration
 
@@ -245,12 +321,11 @@ All navigation uses the centralized PathfindingUtil:
 
 ## Future Enhancements
 
-### Quarry Mode (Planned)
-Layer-by-layer excavation of a defined square area:
-- User defines two corners
-- Bot creates stairway every N layers
-- Systematic clearing from top to bottom
-- Ideal for creating large underground rooms
+### Quarry Stairway Access (Planned)
+Automatic stairway generation for deep quarries:
+- Create stairway every N layers (configurable)
+- Provides safe access to bottom of quarry
+- Useful for very deep excavations (20+ layers)
 
 ### Vein Mining (Planned)
 When ore is discovered:
