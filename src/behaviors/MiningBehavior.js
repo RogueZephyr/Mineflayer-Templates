@@ -1460,6 +1460,7 @@ export default class MiningBehavior {
 
         if (success) {
           completed++;
+          this.currentPlanIndex = completed; // Update real-time progress
         } else {
           const key = this._posKey(action.position);
           const tries = (retryCounts.get(key) || 0) + 1;
@@ -1470,6 +1471,7 @@ export default class MiningBehavior {
           } else {
             this._emitDebug(`Giving up on ${key} after ${tries} attempts`);
             completed++;
+            this.currentPlanIndex = completed; // Update even on failures
           }
         }
 
@@ -1506,6 +1508,7 @@ export default class MiningBehavior {
 
         if (success) {
           completed++;
+          this.currentPlanIndex = completed; // Update real-time progress
         } else {
           const key = this._posKey(action.position);
           const tries = (retryCounts.get(key) || 0) + 1;
@@ -1517,6 +1520,7 @@ export default class MiningBehavior {
             // Give up on this block after max retries
             this._emitDebug(`Giving up on ${key} after ${tries} attempts`);
             completed++;
+            this.currentPlanIndex = completed; // Update even on failures
           }
         }
 
@@ -1648,21 +1652,22 @@ export default class MiningBehavior {
         return;
       }
 
-      // Apply conservative pathfinding during quarry
-      const planPositions = new Set(plan.map(a => `${a.position.x},${a.position.y},${a.position.z}`));
-      if (this.bot.pathfindingUtil && typeof this.bot.pathfindingUtil.pushConservativeDigging === 'function') {
-        this.bot.pathfindingUtil.pushConservativeDigging({
-          digCost: 50,
-          canDigPredicate: (block) => {
-            if (!block) return false;
-            const key = `${block.position.x},${block.position.y},${block.position.z}`;
-            return planPositions.has(key);
-          }
-        });
-      }
+      // NOTE: Conservative pathfinding is NOT used for quarry mode
+      // The bot needs to freely dig and navigate within the quarry area
+      // Conservative pathfinding would prevent proper navigation during excavation
 
       // Execute quarry layer by layer
       let lastLayer = -1;
+      let processedCount = 0;
+      let itemCollectorWasRunning = false;
+      
+      // Disable item collection during quarry to prevent interruptions
+      if (this.bot.itemCollector && this.bot.itemCollector.isRunning) {
+        itemCollectorWasRunning = true;
+        this.bot.itemCollector.stopAuto();
+        this._emitDebug('Paused item collection for quarry operation');
+      }
+      
       for (const digAction of plan) {
         // Check if we should stop
         if (!this.enabled || !this.bot.isAlive || this.currentMode !== 'quarry') {
@@ -1670,8 +1675,21 @@ export default class MiningBehavior {
           break;
         }
 
-        // Log progress when starting a new layer
+        // When starting a new layer, collect items from the previous layer
         if (digAction.layer !== lastLayer) {
+          // If this isn't the first layer, do a collection sweep
+          if (lastLayer >= 0 && this.bot.itemCollector) {
+            this._emitDebug(`Layer ${lastLayer + 1} complete - collecting dropped items...`);
+            try {
+              const collected = await this.bot.itemCollector.collectOnce({ radius: 16 });
+              if (collected > 0) {
+                this._emitDebug(`Collected ${collected} items from layer ${lastLayer + 1}`);
+              }
+            } catch (e) {
+              this._emitDebug(`Failed to collect items: ${e.message}`);
+            }
+          }
+          
           this._emitDebug(`Mining layer ${digAction.layer + 1} of ${depth}`);
           lastLayer = digAction.layer;
         }
@@ -1685,13 +1703,43 @@ export default class MiningBehavior {
         // Execute this dig action with verification
         const pos = digAction.position;
         const block = this.bot.blockAt(pos);
-        if (!block || block.name === 'air') continue; // Already mined or air
+        
+        this._emitDebug(`[Quarry] Processing block ${processedCount + 1}/${plan.length} at ${pos.x},${pos.y},${pos.z} - blockType: ${block ? block.name : 'null'}`);
+        
+        if (!block || block.name === 'air') {
+          this._emitDebug(`[Quarry] Block already air, skipping`);
+          processedCount++;
+          this.currentPlanIndex = processedCount;
+          continue; // Already mined or air
+        }
 
         const success = await this._breakAndConfirm(digAction, { maxRetries: this.settings.digRetryLimit, waitMs: this.settings.digVerifyDelayMs, approachOnRetry: true });
-        if (!success) this._emitDebug(`Skipping block at ${pos} after verification retries`);
+        
+        if (success) {
+          processedCount++;
+          this.currentPlanIndex = processedCount;
+          this._emitDebug(`[Quarry] Successfully mined block ${processedCount}/${plan.length}`);
+        } else {
+          this._emitDebug(`[Quarry] Failed to mine block at ${pos} after verification retries`);
+          processedCount++; // Still count it to avoid infinite loop
+          this.currentPlanIndex = processedCount;
+        }
 
         // Small delay between blocks
         await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      // Final collection sweep after last layer
+      if (this.bot.itemCollector) {
+        this._emitDebug('Final collection sweep after quarry completion...');
+        try {
+          const collected = await this.bot.itemCollector.collectOnce({ radius: 20 });
+          if (collected > 0) {
+            this._emitDebug(`Collected ${collected} items in final sweep`);
+          }
+        } catch (e) {
+          this._emitDebug(`Failed final collection: ${e.message}`);
+        }
       }
 
       // Final deposit after quarry complete
@@ -1711,12 +1759,17 @@ export default class MiningBehavior {
       this.bot.chat(`Quarry failed: ${e.message}`);
     } finally {
       // Reset state
-  this.isWorking = false;
+      this.isWorking = false;
       this.currentMode = null;
       this.miningPlan = [];
-      if (this.bot.pathfindingUtil && typeof this.bot.pathfindingUtil.popDiggingBias === 'function') {
-        this.bot.pathfindingUtil.popDiggingBias();
+      
+      // Re-enable item collection if it was running before quarry
+      if (itemCollectorWasRunning && this.bot.itemCollector) {
+        this.bot.itemCollector.startAuto({ radius: 8, intervalMs: 10000 });
+        this._emitDebug('Resumed item collection after quarry');
       }
+      
+      // No need to pop digging bias - we don't use conservative pathfinding for quarry
     }
   }
 
