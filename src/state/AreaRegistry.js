@@ -119,15 +119,18 @@ export default class AreaRegistry {
       start: normalizedStart,
       end: normalizedEnd
     };
+
+    // Validate and normalize area coordinates
+    const validatedArea = this._validateArea(area);
     
     const all = await this._readAll();
-    all[type] = area;
+    all[type] = validatedArea;
     await this._writeAll(all);
     
     // Update in-memory cache
-    this.areas[type] = area;
+    this.areas[type] = validatedArea;
     
-    return area;
+    return validatedArea;
   }
 
   /**
@@ -163,6 +166,50 @@ export default class AreaRegistry {
     delete this.pendingAreas[type];
     
     return true;
+  }
+
+  /**
+   * Remove an area (alias for deleteArea)
+   * @param {string} type - Area type to remove
+   */
+  async removeArea(type) {
+    return this.deleteArea(type);
+  }
+
+  /**
+   * List all area types
+   * @returns {string[]} Array of area type names
+   */
+  async listAreas() {
+    const all = await this._readAll();
+    return Object.keys(all || {});
+  }
+
+  /**
+   * Validate area coordinates (checks for inverted bounds)
+   * @param {object} area - Area with start/end
+   * @throws {Error} If area is invalid
+   */
+  _validateArea(area) {
+    if (!area || !area.start || !area.end) {
+      throw new Error('Area incomplete: missing start or end coordinates');
+    }
+
+    const { start, end } = area;
+
+    // Normalize coordinates (swap if inverted)
+    const minX = Math.min(start.x, end.x);
+    const maxX = Math.max(start.x, end.x);
+    const minY = Math.min(start.y, end.y);
+    const maxY = Math.max(start.y, end.y);
+    const minZ = Math.min(start.z, end.z);
+    const maxZ = Math.max(start.z, end.z);
+
+    // Return normalized area
+    return {
+      start: { x: minX, y: minY, z: minZ },
+      end: { x: maxX, y: maxY, z: maxZ }
+    };
   }
 
   /**

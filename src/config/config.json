@@ -2,9 +2,10 @@
   "_comment": "=== MINEFLAYER BOT CONFIGURATION ===",
   
   "_server": "Server Connection Settings",
-  "host":  "172.240.8.162",
-  "port": 25567,
+  "host":  "xxrp-smp.modrinth.gg",
+  "port": 24936,
   "version": "1.21.1",
+  "master": "RogueZ3phyr",
   
   "_general": "General Bot Settings",
   "debug": true,

@@ -48,6 +48,7 @@ Quick reference for all bot commands. Use `/msg <BotName> <command>` for whisper
 ```
 !mine strip <dir> [length] [branches]      - Strip mining
 !mine tunnel <dir> [length] [width] [height] - Tunnel (defaults from config)
+!mine quarry <x1> <z1> <x2> <z2> <depth>   - Quarry rectangular area
 !mine deposit                               - Deposit after current task or immediately if idle
 !mine stop                                  - Stop mining
 !mine status                                - Show progress
@@ -58,8 +59,9 @@ Quick reference for all bot commands. Use `/msg <BotName> <command>` for whisper
 - `!mine strip east 100 10` - 100m tunnel, 10 branches
 - `!mine tunnel north 50` - 50m tunnel heading north
 - `!mine tunnel south 30 4 3` - 30m tunnel 4 blocks wide, 3 high
+- `!mine quarry 100 200 150 250 20` - 50x50 quarry, 20 blocks deep
 
-Note: Deposit keeps tools, up to N bridging blocks, and at least M food where N/M come from `behaviors.mining` in `src/config/config.json` (`keepBridgingTotal`, `keepFoodMin`).
+Note: Deposit keeps tools, up to N bridging blocks, and at least M food where N/M come from `behaviors.mining` in `src/config/config.json` (`keepBridgingTotal`, `keepFoodMin`). Multi-chest deposit tries nearby chests automatically.
 
 ### Tool Management
 ```
@@ -92,14 +94,15 @@ Note: Deposit keeps tools, up to N bridging blocks, and at least M food where N/
 
 ### Debug & Admin (Master Only)
 ```
-!debug enable <module>   - Enable debug (farm/eat/mining/tools/itemCollector)
+!debug enable <module>   - Enable debug (farm/eat/mining/tools/itemCollector/wood/pathfinding)
 !debug disable <module>  - Disable debug
 !debug status            - Show debug status
 !whitelist reload        - Reload whitelist
 !whitelist list          - List whitelisted players
 !coordstatus             - Show coordinator diagnostics
-!cache stats             - Show path cache stats
-!cache clear             - Clear path cache
+!cache stats             - Show path cache statistics
+!cache debug             - Show top 5 most-used paths
+!cache clear             - Clear all cached paths
 ```
 
 ---
@@ -107,15 +110,28 @@ Note: Deposit keeps tools, up to N bridging blocks, and at least M food where N/
 ## 💡 Usage Tips
 
 ### Bot Targeting
-Target specific bots by including the bot name:
+
+**Whisper Commands (Private):**
+Target specific bots via whisper:
 ```
-/msg RogueW0lfy sethome 100 64 200    # Only RogueW0lfy
-/msg Subject_9-17 farm start          # Only Subject_9-17
+/msg RogueW0lfy sethome 100 64 200    # Only RogueW0lfy responds
+/msg Subject_9-17 farm start          # Only Subject_9-17 responds
 ```
 
-Without bot name, all bots respond:
+**Public Chat Commands:**
+Target specific bots by including the bot name as the first argument:
 ```
-/msg RogueW0lfy home                  # All bots go home
+!come RogueW0lfy                      # Only RogueW0lfy comes to you
+!mine RogueW0lfy strip east 100 10    # Only RogueW0lfy mines
+!farm Subject_9-17 start              # Only Subject_9-17 farms
+```
+
+**Broadcast to All Bots:**
+Without a bot name, all bots respond (works in both whisper and public chat):
+```
+!home                                 # All bots go home
+!stop                                 # All bots stop tasks
+/msg RogueW0lfy come                  # All bots come to you
 ```
 
 ### Command Shortcuts
@@ -204,9 +220,11 @@ Item collection happens automatically in work zones:
 ### Check Bot Status
 ```
 !mine status             - Mining progress
-!tools status            - Tool inventory
+!tools status            - Quick tool count
+!tools report            - Detailed durability report
 !coordstatus             - Multi-bot coordination
-!cache stats             - Pathfinding cache
+!cache stats             - Pathfinding cache hit rate
+!cache debug             - Top 5 most-used paths
 ```
 
 ### Check Your Access
@@ -326,11 +344,13 @@ Shown with pipe: `option1|option2`
 ## 📚 Detailed Documentation
 
 For in-depth guides, see the `/docs` folder:
+- `OVERVIEW.md` - Quick start and documentation index
 - `MINING.md` - Complete mining system documentation
-- `TOOLHANDLER.md` - Tool management system details
 - `WOODCUTTING.md` - Woodcutting behavior guide
-- `PATH_CACHING.md` - Pathfinding optimization info
+- `PATHFINDING.md` - Navigation, collision avoidance, and path caching
+- `TOOLHANDLER.md` - Tool management system details
 - `WHISPER_PATTERNS.md` - Custom whisper format setup
+- `PERFORMANCE_OPTIMIZATIONS.md` - Multi-bot efficiency improvements
 
 ---
 

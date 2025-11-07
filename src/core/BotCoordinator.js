@@ -1,5 +1,6 @@
 // src/core/BotCoordinator.js
 import { Vec3 } from 'vec3';
+import { Mutex } from 'async-mutex';
 
 /**
  * BotCoordinator - Shared state manager for multi-bot coordination
@@ -15,6 +16,7 @@ export default class BotCoordinator {
     this.blockClaimDuration = 30000; // 30 seconds
     this.areaClaimDuration = 300000; // 5 minutes
     this.goalClaimDuration = 15000; // 15 seconds for pathfinding goals
+    this.mutex = new Mutex(); // For thread-safe operations
   }
 
   /**
@@ -111,28 +113,33 @@ export default class BotCoordinator {
   /**
    * Claim a block for a specific task (harvesting, mining, etc.)
    */
-  claimBlock(botId, pos, task = 'generic') {
+  async claimBlock(botId, pos, task = 'generic') {
     if (!pos) return false;
     
-    const key = `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`;
-    const existing = this.claimedBlocks.get(key);
-    
-    // Check if already claimed by another bot
-    if (existing && existing.botId !== botId) {
-      const age = Date.now() - existing.timestamp;
-      if (age < this.blockClaimDuration) {
-        return false; // Still claimed
+    const release = await this.mutex.acquire();
+    try {
+      const key = `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`;
+      const existing = this.claimedBlocks.get(key);
+      
+      // Check if already claimed by another bot
+      if (existing && existing.botId !== botId) {
+        const age = Date.now() - existing.timestamp;
+        if (age < this.blockClaimDuration) {
+          return false; // Still claimed
+        }
       }
+      
+      // Claim the block
+      this.claimedBlocks.set(key, {
+        botId,
+        timestamp: Date.now(),
+        task
+      });
+      
+      return true;
+    } finally {
+      release();
     }
-    
-    // Claim the block
-    this.claimedBlocks.set(key, {
-      botId,
-      timestamp: Date.now(),
-      task
-    });
-    
-    return true;
   }
 
   /**

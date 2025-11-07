@@ -2,8 +2,27 @@ import ConfigLoader from './core/ConfigLoader.js';
 import BotController from './core/BotController.js';
 import BotCoordinator from './core/BotCoordinator.js';
 import readline from 'readline';
+import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
 
-const config = ConfigLoader.loadConfig('./src/config/config.json');
+// Parse CLI arguments
+const argv = yargs(hideBin(process.argv))
+  .option('bots', {
+    alias: 'b',
+    describe: 'Number of bots to spawn',
+    type: 'number',
+    default: null
+  })
+  .option('non-interactive', {
+    alias: 'n',
+    describe: 'Run in non-interactive mode (no prompts)',
+    type: 'boolean',
+    default: false
+  })
+  .help()
+  .argv;
+
+const config = await ConfigLoader.loadConfig('./src/config/config.json');
 
 // Create shared coordinator for multi-bot synchronization
 const sharedCoordinator = new BotCoordinator();
@@ -15,6 +34,13 @@ setInterval(() => {
 
 // Interactive prompt for number of bots
 async function promptBotCount() {
+  // Non-interactive mode: use CLI arg or default
+  if (argv['non-interactive'] || argv.bots !== null) {
+    const count = argv.bots || 1;
+    console.log(`Non-interactive mode: spawning ${count} bot(s)`);
+    return count;
+  }
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -44,18 +70,26 @@ async function spawnBots(count) {
   console.log(`\nSpawning ${count} bot(s) with ${spawnDelay / 1000}s delay between each...\n`);
 
   for (let i = 0; i < count; i++) {
-    if (i > 0) {
-      console.log(`Waiting ${spawnDelay / 1000}s before spawning bot ${i + 1}...`);
-      await new Promise(resolve => setTimeout(resolve, spawnDelay));
-    }
-
     console.log(`Starting bot ${i + 1}/${count}...`);
-    const bot = new BotController(config, null, sharedCoordinator);
-    bot.start();
-    bots.push(bot);
+    
+    try {
+      const botController = new BotController(config, null, sharedCoordinator);
+      await botController.start(); // Wait for successful login
+      bots.push(botController);
+      console.log(`✅ Bot ${i + 1}/${count} logged in successfully!\n`);
+      
+      // Wait before spawning next bot (only if not the last bot)
+      if (i < count - 1) {
+        console.log(`Waiting ${spawnDelay / 1000}s before spawning next bot...\n`);
+        await new Promise(resolve => setTimeout(resolve, spawnDelay));
+      }
+    } catch (err) {
+      console.error(`❌ Bot ${i + 1}/${count} failed to login: ${err.message}`);
+      console.error(`Skipping to next bot...\n`);
+    }
   }
 
-  console.log(`\nAll ${count} bot(s) started successfully!\n`);
+  console.log(`\n✅ Successfully started ${bots.length}/${count} bot(s)!\n`);
   return bots;
 }
 
@@ -104,8 +138,8 @@ async function gracefulShutdown() {
   process.exit(0);
 }
 
-// Register Ctrl+C handler
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
+// Register shutdown handlers
+process.once('SIGINT', gracefulShutdown);
+process.once('SIGTERM', gracefulShutdown);
 
 console.log('\n💡 Press Ctrl+C to send all bots home and shutdown gracefully\n');

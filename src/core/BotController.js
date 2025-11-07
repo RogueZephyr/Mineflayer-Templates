@@ -87,46 +87,68 @@ export default class BotController {
   }
 
   start() {
-    // create the bot instance
-    this.bot = mineflayer.createBot({
-      host: this.config.host,
-      port: this.config.port,
-      username: this.username,
-      version: this.config.version || 'auto'
-    });
+    // Return a promise that resolves when bot successfully logs in
+    return new Promise((resolve, reject) => {
+      // create the bot instance
+      this.bot = mineflayer.createBot({
+        host: this.config.host,
+        port: this.config.port,
+        username: this.username,
+        version: this.config.version || 'auto'
+      });
 
-    // load mineflayer-pathfinder plugin safely (support named/default exports)
-    try {
-      const PathfinderPlugin = pathfinderModule.pathfinder || pathfinderModule.default || pathfinderModule;
-      if (PathfinderPlugin) {
-        this.bot.loadPlugin(PathfinderPlugin);
-        this.logger.info('[BotController] pathfinder plugin loaded');
-      } else {
-        this.logger.warn('[BotController] pathfinder plugin not found in module import');
-      }
-    } catch (e) {
-      this.logger.warn('[BotController] Failed to load pathfinder plugin:', e.message || e);
-    }
-    
-    // Basic lifecycle listeners
-    this.bot.once('login', () => this.onLogin());
-    this.bot.once('spawn', () => this.onSpawn());
+      // Attach usernameList to bot for ChatCommandHandler access
+      this.bot.constructor.usernameList = BotController.usernameList;
 
-    // global error handling
-    this.bot.on('kicked', (reason) => this.logger.warn(`Kicked: ${reason}`));
-    this.bot.on('end', (reason) => {
-      this.logger.warn(`Connection ended. Reason: ${reason || 'unknown'}`);
-      this.onEnd();
-    });
-    this.bot.on('error', (err) => {
-      // Handle PartialReadError gracefully (common with complex NBT data)
-      if (err.partialReadError || err.message?.includes('PartialReadError')) {
-        this.logger.warn(`[Protocol] Partial read error (likely NBT/inventory data) - continuing...`);
-        return;
+      // load mineflayer-pathfinder plugin safely (support named/default exports)
+      try {
+        const PathfinderPlugin = pathfinderModule.pathfinder || pathfinderModule.default || pathfinderModule;
+        if (PathfinderPlugin) {
+          this.bot.loadPlugin(PathfinderPlugin);
+          this.logger.info('[BotController] pathfinder plugin loaded');
+        } else {
+          this.logger.warn('[BotController] pathfinder plugin not found in module import');
+        }
+      } catch (e) {
+        this.logger.warn('[BotController] Failed to load pathfinder plugin:', e.message || e);
       }
-      this.logger.error(`Bot error: ${err}`);
+      
+      // Basic lifecycle listeners
+      this.bot.once('login', () => {
+        this.onLogin();
+        resolve(this); // Resolve promise when login succeeds
+      });
+      
+      this.bot.once('spawn', () => this.onSpawn());
+
+      // global error handling
+      this.bot.on('kicked', (reason) => {
+        this.logger.warn(`Kicked: ${reason}`);
+        reject(new Error(`Bot kicked: ${reason}`));
+      });
+      
+      this.bot.on('end', (reason) => {
+        this.logger.warn(`Connection ended. Reason: ${reason || 'unknown'}`);
+        this.onEnd();
+      });
+      
+      this.bot.on('error', (err) => {
+        // Handle PartialReadError gracefully (common with complex NBT data)
+        if (err.partialReadError || err.message?.includes('PartialReadError')) {
+          this.logger.warn(`[Protocol] Partial read error (likely NBT/inventory data) - continuing...`);
+          return;
+        }
+        this.logger.error(`Bot error: ${err}`);
+        reject(err);
+      });
+      
+      this.bot.on('disconnect', (packet) => this.logger.warn(`Disconnected: ${JSON.stringify(packet)}`));
+
+      // Timeout after 30 seconds if login doesn't succeed
+      setTimeout(() => {
+        reject(new Error('Bot login timeout after 30 seconds'));
+      }, 30000);
     });
-    this.bot.on('disconnect', (packet) => this.logger.warn(`Disconnected: ${JSON.stringify(packet)}`));
   }
 
   onLogin() {

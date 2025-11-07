@@ -1,23 +1,27 @@
 # Mining Behavior Documentation
 
 ## Overview
-The MiningBehavior provides modular mining strategies with inventory-aware stopping and automatic chest deposits. The bot can execute strip mining, tunneling, and (future) quarry operations.
+The MiningBehavior provides modular mining strategies with inventory-aware stopping and automatic chest deposits. The bot can execute strip mining, tunneling, and quarry operations with robust verification and obstacle handling.
 
 ## Features
 
 ### Implemented Features
 - **Strip Mining**: Main tunnel with alternating side branches
 - **Tunnel Mining**: Long directional tunnels with configurable dimensions
-- **Quarry Mining** *(NEW)*: Rectangular area excavation in horizontal layers
+- **Quarry Mining**: Rectangular area excavation in horizontal layers
   - Coordinate-based area selection
   - Layer-by-layer downward excavation
   - Multi-chest deposit system with automatic fallback
   - 80% inventory threshold for efficient operation
   - Conservative pathfinding to prevent accidental digging
   - Automatic cleanup pass for missed blocks
+- **Block Verification System**: Ensures all blocks are actually broken before continuing
+  - Retry logic with configurable attempts
+  - Post-dig verification delay to accommodate server tick latency
+  - Prevents ghost blocks and incomplete mining
 - **Tool Management**: Automatically equips best available pickaxe via ToolHandler
 - **Inventory Management**: Auto-deposit when inventory fills up
-- **Multi-Chest Deposit System** *(NEW)*: Tries multiple chests automatically
+- **Multi-Chest Deposit System**: Tries multiple chests automatically
   - Finds all nearby chests within 15 blocks
   - Attempts deposit to each chest in sequence
   - Continues to next chest if current one is full
@@ -28,6 +32,7 @@ The MiningBehavior provides modular mining strategies with inventory-aware stopp
   - Covers water sources with blocks for safe passage
   - Covers lava sources to prevent damage
   - Maintains original mining Y level throughout operation
+  - Quarry-specific safety: Places blocks 2 blocks below bot (prevents refilling just-mined blocks)
 - **Pathfinding Integration**: Uses centralized pathfinding with path caching
 - **Multi-bot Coordination**: Respects shared coordinator for multi-bot setups
 
@@ -160,6 +165,11 @@ Located in `src/config/config.json` under `behaviors.mining`:
   - Default: `["cobblestone", "dirt", "stone", "andesite", "diorite", "granite", "netherrack"]`
   - Bot uses first available material from the list
 - `maxBridgeDistance`: Maximum distance to bridge in one go (default: 5)
+
+### Block Verification
+- `digVerifyDelayMs`: Delay after digging before verifying block is broken (default: 150)
+  - Accommodates server tick/latency delays
+  - Prevents ghost blocks in mining operations
 
 **How It Works:**
 When mining, the bot:

@@ -79,17 +79,19 @@ export default class PathfindingUtil {
         
         try {
           await this.bot.pathfinder.goto(goal);
-          
-          // Successfully used cached path - keep it
-          if (this.coordinator) {
-            this.coordinator.clearPathfindingGoal(this.bot.username);
-          }
-          return;
+          await this._waitForSettle(); // Give bot time to settle after pathfinding
         } catch (e) {
           // Cached path failed - invalidate and recalculate
           this._log(`Cached path failed: ${e.message}, recalculating...`);
           this.pathCache.invalidatePathsNear(startPos, 10);
+          throw e;
+        } finally {
+          // Always clear goal, even on failure
+          if (this.coordinator) {
+            this.coordinator.clearPathfindingGoal(this.bot.username);
+          }
         }
+        return;
       }
       
       // No cache or cache failed - calculate new path
@@ -98,30 +100,41 @@ export default class PathfindingUtil {
       // Store path calculation start time
       const pathStart = Date.now();
       
-      await this.bot.pathfinder.goto(goal);
-      
-      const pathTime = Date.now() - pathStart;
-      
-      // Cache the successful path if it took significant time (> 500ms)
-      if (pathTime > 500 && this.bot.pathfinder.path) {
-        this._log(`Caching new path (${this.bot.pathfinder.path.length} nodes, took ${pathTime}ms)`);
-        this.pathCache.cachePath(startPos, targetPos, {
-          path: this.bot.pathfinder.path,
-          cost: pathTime
-        });
-      }
-      
-      // Clear goal after successful pathfinding
-      if (this.coordinator) {
-        this.coordinator.clearPathfindingGoal(this.bot.username);
+      try {
+        await this.bot.pathfinder.goto(goal);
+        
+        const pathTime = Date.now() - pathStart;
+        
+        // Cache the successful path if it took significant time (> 500ms)
+        if (pathTime > 500 && this.bot.pathfinder.path) {
+          this._log(`Caching new path (${this.bot.pathfinder.path.length} nodes, took ${pathTime}ms)`);
+          this.pathCache.cachePath(startPos, targetPos, {
+            path: this.bot.pathfinder.path,
+            cost: pathTime
+          });
+        }
+        
+        await this._waitForSettle(); // Give bot time to settle after pathfinding
+      } finally {
+        // Always clear goal, even on failure
+        if (this.coordinator) {
+          this.coordinator.clearPathfindingGoal(this.bot.username);
+        }
       }
     } catch (e) {
-      // Clear goal on error
+      // Clear goal on error (redundant with finally, but explicit for clarity)
       if (this.coordinator) {
         this.coordinator.clearPathfindingGoal(this.bot.username);
       }
       throw e;
     }
+  }
+
+  /**
+   * Wait for bot to settle after pathfinding (prevents immediate movement conflicts)
+   */
+  async _waitForSettle() {
+    return new Promise(resolve => setTimeout(resolve, 500));
   }
 
   /**

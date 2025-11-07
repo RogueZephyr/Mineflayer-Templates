@@ -32,9 +32,17 @@ export default class PathCache {
   }
 
   /**
-   * Generate cache key from start and end positions
+   * Generate cache key from start and end positions (includes dimension context)
    */
-  _getCacheKey(start, end) {
+  _getCacheKey(start, end, dimension = null) {
+    // Get dimension from bot if not provided
+    if (!dimension && this.bot && this.bot.game && this.bot.game.dimension) {
+      dimension = this.bot.game.dimension;
+    }
+    
+    // Fallback to 'overworld' if dimension unknown
+    dimension = dimension || 'overworld';
+    
     const sx = Math.floor(start.x / this.pathValidityRadius) * this.pathValidityRadius;
     const sy = Math.floor(start.y / this.pathValidityRadius) * this.pathValidityRadius;
     const sz = Math.floor(start.z / this.pathValidityRadius) * this.pathValidityRadius;
@@ -43,7 +51,7 @@ export default class PathCache {
     const ey = Math.floor(end.y / this.pathValidityRadius) * this.pathValidityRadius;
     const ez = Math.floor(end.z / this.pathValidityRadius) * this.pathValidityRadius;
     
-    return `${sx},${sy},${sz}->${ex},${ey},${ez}`;
+    return `${dimension}:${sx},${sy},${sz}->${ex},${ey},${ez}`;
   }
 
   /**
