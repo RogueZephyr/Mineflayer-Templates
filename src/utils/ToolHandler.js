@@ -202,7 +202,7 @@ export default class ToolHandler {
     
     try { 
       if (this.bot.debugTools && this.bot.debugTools.isEnabled('tools')) {
-        console.log('[DEBUG:Tools]', `[${botName}]`, message);
+        this.logger.debug(`[Tools] [${botName}] ${message}`);
         this.bot.debugTools.log('tools', `[${botName}] ${message}`);
       }
     } catch (_) {}

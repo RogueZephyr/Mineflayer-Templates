@@ -13,4 +13,5 @@ export default class Logger {
   warn(msg) { console.log(`${this._timestamp()} ${chalk.yellow('[WARN]')} ${msg}`) }
   error(msg) { console.log(`${this._timestamp()} ${chalk.red('[ERROR]')} ${msg}`) }
   success(msg) { console.log(`${this._timestamp()} ${chalk.green('[OK]')} ${msg}`) }
+  debug(msg) { console.log(`${this._timestamp()} ${chalk.magenta('[DEBUG]')} ${msg}`) }
 }

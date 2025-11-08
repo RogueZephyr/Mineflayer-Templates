@@ -97,7 +97,7 @@ export default class WoodCuttingBehavior {
     
     try { 
       if (this.bot.debugTools && this.bot.debugTools.isEnabled('wood')) {
-        console.log('[DEBUG:Wood]', `[${botName}]`, message);
+        this.logger.debug(`[Wood] [${botName}] ${message}`);
         this.bot.debugTools.log('wood', `[${botName}] ${message}`);
       }
     } catch (_) {}

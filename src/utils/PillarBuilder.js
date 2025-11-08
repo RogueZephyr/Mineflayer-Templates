@@ -57,7 +57,7 @@ export default class PillarBuilder {
     
     try { 
       if (this.bot.debugTools && this.bot.debugTools.isEnabled('wood')) {
-        console.log('[DEBUG:Pillar]', `[${botName}]`, message);
+        this.logger.debug(`[Pillar] [${botName}] ${message}`);
         this.bot.debugTools.log('wood', `[${botName}] ${message}`);
       }
     } catch (_) {}

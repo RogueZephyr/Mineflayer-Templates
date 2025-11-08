@@ -52,7 +52,7 @@ export default class FarmBehavior {
     
     try { 
       if (this.bot.debugTools && this.bot.debugTools.isEnabled('farm')) {
-        console.log('[DEBUG:Farm]', message);
+        this.logger.debug(`[Farm] ${message}`);
         this.bot.debugTools.log('farm', message);
       }
     } catch (_) {}

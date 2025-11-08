@@ -7,7 +7,7 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "nodemon src/index.js",
+    "start": "node src/index.js",
     "dev": "nodemon src/index.js -b 1 -n",
     "install-deps": "node install.js"
   },
@@ -19,6 +19,8 @@
     "minecraft-data": "^3.67.0",
     "mineflayer": "^4.33.0",
     "mineflayer-pathfinder": "^2.4.5",
+    "socks": "^2.8.7",
+    "socks5": "^1.0.1",
     "vec3": "^0.1.8",
     "yargs": "^18.0.0"
   },

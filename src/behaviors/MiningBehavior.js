@@ -143,7 +143,7 @@ export default class MiningBehavior {
     
     try { 
       if (this.bot.debugTools && this.bot.debugTools.isEnabled('mining')) {
-        console.log('[DEBUG:Mining]', `[${botName}]`, message);
+        this.logger.debug(`[Mining] [${botName}] ${message}`);
         this.bot.debugTools.log('mining', `[${botName}] ${message}`);
       }
     } catch (_) {}
