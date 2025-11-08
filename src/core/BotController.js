@@ -8,6 +8,7 @@ import figlet from 'figlet';
 import LookBehavior from '../behaviors/LookBehavior.js';
 import Logger from '../utils/logger.js';
 import ChatLogger from '../behaviors/ChatLogger.js';
+import ChatDebugLogger from '../utils/ChatDebugLogger.js';
 import ChatCommandHandler from '../utils/ChatCommandHandler.js';
 import EatBehavior from '../behaviors/EatBehavior.js';
 import SleepBehavior from '../behaviors/SleepBehavior.js';
@@ -23,6 +24,7 @@ import DebugTools from '../utils/DebugTools.js';
 import PathfindingUtil from '../utils/PathfindingUtil.js';
 import ToolHandler from '../utils/ToolHandler.js';
 import AreaRegistry from '../state/AreaRegistry.js';
+import ProxyManager from '../utils/ProxyManager.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -86,16 +88,67 @@ export default class BotController {
     return newName;
   }
 
-  start() {
+  start(retryCount = 0, maxRetries = 3) {
     // Return a promise that resolves when bot successfully logs in
-    return new Promise((resolve, reject) => {
-      // create the bot instance
-      this.bot = mineflayer.createBot({
+    return new Promise(async (resolve, reject) => {
+      // Build bot options
+      const botOptions = {
         host: this.config.host,
         port: this.config.port,
         username: this.username,
         version: this.config.version || 'auto'
-      });
+      };
+
+      // Initialize proxy manager
+      const proxyManager = new ProxyManager(this.config, this.logger, i);
+      
+      // Assign proxy from pool if rotation is enabled
+      if (ProxyManager.proxyPool?.rotation?.enabled) {
+        proxyManager.assignProxyFromPool();
+      }
+      
+      // Validate proxy configuration
+      const validation = proxyManager.validateConfig();
+      if (!validation.valid) {
+        this.logger.error('[Proxy] Invalid configuration:');
+        validation.errors.forEach(err => this.logger.error(`  - ${err}`));
+        reject(new Error('Invalid proxy configuration'));
+        return;
+      }
+
+      // Add proxy connection if enabled
+      if (proxyManager.isEnabled()) {
+        try {
+          const connectFn = await proxyManager.getProxyConnectFunction(
+            this.config.host,
+            this.config.port
+          );
+          
+          if (connectFn) {
+            botOptions.connect = connectFn;
+            const proxyInfo = proxyManager.getProxyInfo();
+            const label = proxyInfo.label || `${proxyInfo.host}:${proxyInfo.port}`;
+            this.logger.info(`[Proxy] Enabled: ${label} (${proxyInfo.type}${proxyInfo.authenticated ? ', authenticated' : ''})`);
+            // Optional: check and log external IP before connecting, if configured
+            if (this.config.proxy?.ipCheckOnStart) {
+              try {
+                const ip = await proxyManager.fetchExternalIP();
+                if (ip) this.logger.info(`[Proxy] External IP (pre-login): ${ip}`);
+                else this.logger.warn('[Proxy] External IP could not be determined before login');
+              } catch (e) {
+                this.logger.warn(`[Proxy] IP check error: ${e.message || e}`);
+              }
+            }
+          }
+        } catch (err) {
+          this.logger.error(`[Proxy] Failed to initialize: ${err.message}`);
+          reject(err);
+          return;
+        }
+      }
+
+      // create the bot instance
+      this.bot = mineflayer.createBot(botOptions);
 
       // Attach usernameList to bot for ChatCommandHandler access
       this.bot.constructor.usernameList = BotController.usernameList;
@@ -123,8 +176,37 @@ export default class BotController {
 
       // global error handling
       this.bot.on('kicked', (reason) => {
-        this.logger.warn(`Kicked: ${reason}`);
-        reject(new Error(`Bot kicked: ${reason}`));
+        const reasonStr = typeof reason === 'string' ? reason : JSON.stringify(reason);
+        this.logger.warn(`Kicked: ${reasonStr}`);
+        
+        // Check if it's a rate limit kick
+        const isRateLimit = reasonStr.includes('wait') && reasonStr.includes('seconds');
+        
+        if (isRateLimit && retryCount < maxRetries) {
+          // Extract wait time from message (e.g., "You must wait 11 seconds")
+          const waitMatch = reasonStr.match(/wait (\d+) seconds?/i);
+          const waitTime = waitMatch ? parseInt(waitMatch[1]) : 5;
+          const actualWait = Math.max(waitTime, 5) + 2; // Add 2 second buffer
+          
+          this.logger.info(`Rate limited. Retrying in ${actualWait} seconds... (Attempt ${retryCount + 1}/${maxRetries})`);
+          
+          // Clean up current bot instance
+          try {
+            this.bot.removeAllListeners();
+            this.bot.quit();
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+          
+          // Retry after waiting
+          setTimeout(() => {
+            this.start(retryCount + 1, maxRetries)
+              .then(resolve)
+              .catch(reject);
+          }, actualWait * 1000);
+        } else {
+          reject(new Error(`Bot kicked: ${reasonStr}`));
+        }
       });
       
       this.bot.on('end', (reason) => {
@@ -244,7 +326,7 @@ export default class BotController {
     this.logger.info('[BotController] PathfindingUtil initialized with path caching');
 
     this.logger.info(`${chalk.green(this.username)} has loaded correctly`)
-    this.bot.chat(`/msg ${this.master} Hello! Test environment loaded!`);
+    //this.bot.chat(`/msg ${this.master} Hello! Test environment loaded!`);
 
     // Initialize all behaviors with proper configuration
     const lookConfig = this.config.behaviors?.look || {};
@@ -256,6 +338,13 @@ export default class BotController {
     this.behaviors.chatLogger = new ChatLogger(this.bot, this.logger, BotController.usernameList);
     this.behaviors.chatLogger.enable();
     this.logger.info('ChatLogger initialized successfully!');
+
+    // Initialize ChatDebugLogger if enabled in config
+    if (this.config.chatDebugLogger?.enabled) {
+      this.behaviors.chatDebugLogger = new ChatDebugLogger(this.bot, this.logger, this.config);
+      this.behaviors.chatDebugLogger.enable();
+      this.logger.info('ChatDebugLogger enabled - logging all chat events to file');
+    }
 
     this.behaviors.eat = new EatBehavior(this.bot, this.logger, this.master);
     this.behaviors.sleep = new SleepBehavior(
@@ -300,12 +389,12 @@ export default class BotController {
     this.hungerCheckInterval = setInterval(async () => {
       try {
         if (this.config.debug === true) {
-          this.logger.info(`[Debug] Checking hunger...`);
+          this.logger.debug(`Checking hunger...`);
         }
         await this.behaviors.eat.checkHunger();
       } catch (err) {
         if (this.config.debug === true) {
-          this.logger.error(`[Debug] Error in checkHunger: ${err.message}`);
+          this.logger.error(`Error in checkHunger: ${err.message}`);
         }
       }
     }, 30000); // Check every 30 seconds
@@ -322,6 +411,19 @@ export default class BotController {
     }
 
     this.logger.info('All behaviors initialized successfully!');
+
+    // If proxy is enabled and ipCheckOnStart is true, show the external IP once after spawn
+    try {
+      const proxyManager = new ProxyManager(this.config, this.logger);
+      if (proxyManager.isEnabled() && this.config.proxy?.ipCheckOnStart === true) {
+        // Run asynchronously; no need to block
+        (async () => {
+          const ip = await proxyManager.fetchExternalIP();
+          if (ip) this.logger.success(`[Proxy] External IP (post-login): ${ip}`);
+          else this.logger.warn('[Proxy] External IP could not be determined post-login');
+        })();
+      }
+    } catch (_) { /* ignore */ }
   }
 
   onEnd() {

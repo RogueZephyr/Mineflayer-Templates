@@ -1,6 +1,7 @@
 // src/utils/ChatCommandHandler.js
 import chalk from 'chalk';
 import { Vec3 } from 'vec3';
+import readline from 'readline';
 import Logger from './logger.js';
 // import PathfinderBehavior from '../behaviors/PathfinderBehavior.js';
 import * as PathfinderBehaviorModule from '../behaviors/PathfinderBehavior.js';
@@ -20,6 +21,10 @@ export default class ChatCommandHandler {
     this.logger = new Logger();
     this.commands = new Map();
     this.config = config;
+    // Flag indicating a command originated from the local console.
+    // While true, all outbound chat/whisper/reply traffic is suppressed
+    // from the Minecraft server and logged to console instead.
+    this._consoleCommandActive = false;
     
     // Rate limiting per user (prevents spam/abuse)
     this.rateLimits = new Map(); // username -> lastCommandTime
@@ -59,6 +64,79 @@ export default class ChatCommandHandler {
     // Init everything
     this.registerDefaultCommands();
     this.initListeners();
+    this.initConsoleInput();
+  }
+
+  // ------------------------------
+  // Console Input Handler
+  // ------------------------------
+  initConsoleInput() {
+    // Skip if already initialized (prevent duplicate listeners)
+    if (this.constructor._consoleInitialized) return;
+    this.constructor._consoleInitialized = true;
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: ''
+    });
+
+    rl.on('line', async (line) => {
+      const input = line.trim();
+      if (!input) return;
+
+      try {
+        // Check if input is a bot command (starts with !)
+        if (input.startsWith('!')) {
+          const cleanMessage = input.replace(cmdPrefix, '').trim();
+          const parts = cleanMessage.split(/\s+/);
+          const commandName = parts.shift().toLowerCase();
+          const args = parts;
+
+          if (this.commands.has(commandName)) {
+            this.logger.info(chalk.cyan(`[Console] Executing command: ${commandName}`));
+            
+            // Execute command as master (console has full permissions)
+            const handler = this.commands.get(commandName);
+            // Override chat + whisper temporarily so any direct calls are captured.
+            const originalChat = this.bot.chat ? this.bot.chat.bind(this.bot) : null;
+            const originalWhisper = this.bot.whisper ? this.bot.whisper.bind(this.bot) : null;
+            this._consoleCommandActive = true;
+            if (originalChat) {
+              this.bot.chat = (msg) => { if (msg) this.logger.info(`[Console Reply] ${msg}`); };
+            }
+            if (originalWhisper) {
+              this.bot.whisper = (target, msg) => { if (msg) this.logger.info(`[Console Reply->${target}] ${msg}`); };
+            }
+            try {
+              const res = handler.call(this, this.master, args, true); // treat console as private context
+              if (res instanceof Promise) await res;
+            } catch (err) {
+              this.logger.error(`[Console] Command error: ${err?.message || err}`);
+            } finally {
+              // Restore originals
+              this._consoleCommandActive = false;
+              if (originalChat) this.bot.chat = originalChat;
+              if (originalWhisper) this.bot.whisper = originalWhisper;
+            }
+          } else {
+            this.logger.warn(chalk.yellow(`[Console] Unknown command: ${commandName}`));
+            this.logger.info(chalk.gray('Type !help for available commands'));
+          }
+        } else {
+          // If not a command, send as chat message
+          this.bot.chat(input);
+        }
+      } catch (err) {
+        this.logger.error(`[Console] Error processing input: ${err.message || err}`);
+      }
+    });
+
+    rl.on('close', () => {
+      this.logger.info(chalk.gray('[Console] Input closed'));
+    });
+
+    this.logger.success(chalk.green('[Console] Command input enabled - Type !help for commands or just type to chat'));
   }
 
   // ------------------------------
@@ -108,12 +186,82 @@ export default class ChatCommandHandler {
           if (whisperData) {
             this.logger.info(`[Whisper] Detected custom format from ${whisperData.username}: ${whisperData.message}`);
             this.handleMessage(whisperData.username, whisperData.message, true);
+            return;
+          }
+          
+          // Try to parse custom chat format from unsigned field
+          const chatData = this._parseCustomChat(jsonMsg, rawText);
+          if (chatData) {
+            this.logger.info(`[Chat] Custom format detected from ${chatData.username}: ${chatData.message}`);
+            this.handleMessage(chatData.username, chatData.message, false);
           }
         }
       } catch (e) {
         // Silent fail - this is just a fallback for custom formats
       }
     });
+  }
+
+  // ------------------------------
+  // Custom Chat Parser
+  // ------------------------------
+  
+  /**
+   * Parse custom chat format from server (handles unsigned field with rank prefixes)
+   */
+  _parseCustomChat(jsonMsg, rawText) {
+    try {
+      // Check if there's an unsigned field with chat data
+      if (jsonMsg?.unsigned?.with) {
+        const unsignedWith = jsonMsg.unsigned.with[0];
+        if (unsignedWith?.extra) {
+          const extras = unsignedWith.extra;
+          let username = '';
+          let message = '';
+          
+          // Parse the extra array: [rank, username, message]
+          extras.forEach(part => {
+            const text = part.text || part.json?.text || part[''] || '';
+            
+            // Skip rank prefixes like [Member]
+            if (text.includes('[') && text.includes(']')) {
+              return;
+            }
+            
+            // Extract message after colon
+            if (text.includes(':')) {
+              const parts = text.split(':');
+              message = parts.slice(1).join(':').trim();
+              return;
+            }
+            
+            // First non-rank text is the username
+            if (!username && text.trim() && !text.includes('[')) {
+              username = text.trim();
+            }
+          });
+          
+          if (username && message) {
+            return { username, message };
+          }
+        }
+      }
+      
+      // Fallback: try to extract from rawText if it matches pattern
+      // Format: "[Rank] Username: Message" or "Username: Message"
+      const chatPattern = /(?:\[.+?\]\s*)?(\w+):\s*(.+)/;
+      const match = rawText.match(chatPattern);
+      if (match) {
+        return {
+          username: match[1],
+          message: match[2]
+        };
+      }
+    } catch (e) {
+      // Failed to parse, return null
+    }
+    
+    return null;
   }
 
   // ------------------------------
@@ -198,6 +346,16 @@ export default class ChatCommandHandler {
 
   // Helper method to reply (whisper if private, chat if public)
   reply(username, message, isPrivate) {
+    if (!message) return;
+    // Intercept replies during console command execution
+    if (this._consoleCommandActive) {
+      if (isPrivate) {
+        this.logger.info(`[Console Reply->${username}] ${message}`);
+      } else {
+        this.logger.info(`[Console Reply] ${message}`);
+      }
+      return; // do not send to server
+    }
     if (isPrivate) {
       this.bot.whisper(username, message);
     } else {
@@ -1452,6 +1610,135 @@ export default class ChatCommandHandler {
         }
         default:
           this.bot.whisper(username, 'Usage: !whisper <list|test>');
+      }
+    });
+
+  // Chat debug logger management (master only)
+    this.register('chatdebug', (username, args) => {
+      if (username !== this.master) {
+        this.bot.whisper(username, 'Only master can manage chat debug logger.');
+        return;
+      }
+
+      const sub = args[0]?.toLowerCase();
+      
+      if (!this.behaviors.chatDebugLogger) {
+        this.bot.whisper(username, 'ChatDebugLogger not enabled. Set "chatDebugLogger.enabled: true" in config.json');
+        return;
+      }
+
+      switch (sub) {
+        case 'start':
+        case 'enable': {
+          this.behaviors.chatDebugLogger.enable();
+          this.bot.whisper(username, 'ChatDebugLogger enabled - logging all chat events');
+          break;
+        }
+        case 'stop':
+        case 'disable': {
+          this.behaviors.chatDebugLogger.disable();
+          this.bot.whisper(username, 'ChatDebugLogger disabled and logs flushed');
+          break;
+        }
+        case 'summary': {
+          const summary = this.behaviors.chatDebugLogger.getSummary();
+          this.bot.whisper(username, `=== Chat Debug Summary ===`);
+          this.bot.whisper(username, `Total Logs: ${summary.totalLogs}`);
+          if (summary.error) {
+            this.bot.whisper(username, `Error: ${summary.error}`);
+          } else {
+            Object.entries(summary.eventTypes).forEach(([type, count]) => {
+              this.bot.whisper(username, `  ${type}: ${count}`);
+            });
+          }
+          break;
+        }
+        case 'clear': {
+          this.behaviors.chatDebugLogger.clearLogs();
+          this.bot.whisper(username, 'Chat debug logs cleared');
+          break;
+        }
+        case 'flush': {
+          this.behaviors.chatDebugLogger.flushLogs();
+          this.bot.whisper(username, 'Chat debug logs flushed to file');
+          break;
+        }
+        default:
+          this.bot.whisper(username, 'Usage: !chatdebug <start|stop|summary|clear|flush>');
+      }
+    });
+
+  // Proxy management (master only)
+    this.register('proxy', async (username, args, isPrivate) => {
+      if (username !== this.master) {
+        this.reply(username, 'Only master can manage proxy settings.', isPrivate);
+        return;
+      }
+
+      const sub = (args[0] || '').toLowerCase();
+      try {
+        const ProxyManagerModule = await import('./ProxyManager.js');
+        const ProxyManager = ProxyManagerModule.default;
+        const proxyManager = new ProxyManager(this.config, this.logger);
+
+        switch (sub) {
+          case 'status': {
+            const info = proxyManager.getProxyInfo();
+            this.reply(username, '=== Proxy Status ===', true);
+            if (info.enabled) {
+              this.reply(username, `Enabled: Yes`, true);
+              this.reply(username, `Host: ${info.host}`, true);
+              this.reply(username, `Port: ${info.port}`, true);
+              this.reply(username, `Type: ${info.type}`, true);
+              this.reply(username, `Auth: ${info.authenticated ? 'Yes' : 'No'}`, true);
+            } else {
+              this.reply(username, 'Enabled: No', true);
+              this.reply(username, 'Set proxy.enabled to true in config.json', true);
+            }
+            break;
+          }
+          case 'test': {
+            if (!proxyManager.isEnabled()) {
+              this.reply(username, 'Proxy is not enabled in config', true);
+              return;
+            }
+            this.reply(username, 'Testing proxy connection...', true);
+            try {
+              const success = await proxyManager.testConnection();
+              this.reply(username, success ? '✓ Proxy connection successful!' : '✗ Proxy connection failed', true);
+            } catch (err) {
+              this.reply(username, `✗ Test failed: ${err.message}`, true);
+            }
+            break;
+          }
+          case 'validate': {
+            const validation = proxyManager.validateConfig();
+            this.reply(username, '=== Proxy Config Validation ===', true);
+            if (validation.valid) {
+              this.reply(username, '✓ Configuration is valid', true);
+            } else {
+              this.reply(username, '✗ Configuration errors:', true);
+              validation.errors.forEach(err => this.reply(username, `  - ${err}`, true));
+            }
+            break;
+          }
+          case 'ip':
+          case 'ipcheck': {
+            try {
+              const ip = await proxyManager.fetchExternalIP();
+              if (ip) this.reply(username, `External IP (via proxy): ${ip}`, true);
+              else this.reply(username, `Failed to determine external IP`, true);
+            } catch (e) {
+              this.reply(username, `IP check error: ${e.message || e}`, true);
+            }
+            break;
+          }
+          default:
+            this.reply(username, 'Usage: !proxy <status|test|validate>', true);
+        }
+      } catch (e) {
+        this.logger.error(`[ProxyCmd] Failed: ${e.message || e}`);
+        this.reply(username, `Proxy command failed: ${e.message || e}`, true);
       }
     });
   }

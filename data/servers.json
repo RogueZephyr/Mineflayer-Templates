@@ -1,0 +1,47 @@
+{
+  "_comment": "Cached server entries for quick selection and switching.",
+  "servers": [
+    {
+      "alias": "smp",
+      "host": "172.240.8.162",
+      "port": 25567,
+      "version": "1.21.1",
+      "lastUsed": 1762589170782
+    },
+    {
+      "alias": "test",
+      "host": "xxrp-smp.modrinth.gg",
+      "port": 24936,
+      "version": "1.21.1",
+      "lastUsed": 1762590536293
+    },
+    {
+      "alias": "xxrp-smp.modrinth.gg",
+      "host": "xxrp-smp.modrinth.gg",
+      "port": 24936,
+      "version": "1.21.1",
+      "lastUsed": 1762588918220
+    },
+    {
+      "alias": "172.240.8.162",
+      "host": "172.240.8.162",
+      "port": 25567,
+      "version": "1.21.1",
+      "lastUsed": 1762589174123
+    },
+    {
+      "alias": "extremecraft",
+      "host": "sl.extremecraft.net",
+      "port": 25565,
+      "version": "1.21.1",
+      "lastUsed": 1762590547475
+    },
+    {
+      "alias": "sl.extremecraft.net",
+      "host": "sl.extremecraft.net",
+      "port": 25565,
+      "version": "1.21.1",
+      "lastUsed": 1762590420062
+    }
+  ]
+}

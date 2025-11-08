@@ -1,0 +1,21 @@
+{
+  "_comment": "Proxy pool for rotation. Each bot will use a different proxy from this list.",
+  "_help": "Add multiple SOCKS proxies here. Bots will cycle through them automatically.",
+  "proxies": [
+    {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 9050,
+      "type": 5,
+      "username": "",
+      "password": "",
+      "label": "Local Tor"
+    }
+  ],
+  "rotation": {
+    "enabled": true,
+    "mode": "sequential",
+    "_modeOptions": "sequential (cycle through list) | random (pick random each time)",
+    "rotateOnRestart": true
+  }
+}

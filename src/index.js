@@ -19,10 +19,73 @@ const argv = yargs(hideBin(process.argv))
     type: 'boolean',
     default: false
   })
+  .option('server', {
+    alias: 's',
+    describe: 'Select a server by alias or host (from data/servers.json)',
+    type: 'string'
+  })
+  .option('add-server', {
+    describe: 'Add a server to cache: --add-server --alias NAME --host HOST --port PORT [--version v]',
+    type: 'boolean',
+    default: false
+  })
+  .option('alias', { describe: 'Alias for server add/remove', type: 'string' })
+  .option('host', { describe: 'Host for server add', type: 'string' })
+  .option('port', { describe: 'Port for server add', type: 'number' })
+  .option('version', { describe: 'Version for server add', type: 'string' })
+  .option('remove-server', {
+    describe: 'Remove server by alias',
+    type: 'string'
+  })
+  .option('list-servers', {
+    describe: 'List cached servers and exit',
+    type: 'boolean',
+    default: false
+  })
   .help()
   .argv;
 
-const config = await ConfigLoader.loadConfig('./src/config/config.json');
+// Load server registry for overrides
+import ServerRegistry from './utils/ServerRegistry.js';
+const serverRegistry = new ServerRegistry();
+
+if (argv['list-servers']) {
+  const list = serverRegistry.list();
+  console.log('=== Cached Servers ===');
+  list.forEach((s, i) => console.log(`${i + 1}. ${s.alias} -> ${s.host}:${s.port} (${s.version})`));
+  process.exit(0);
+}
+
+if (argv['add-server']) {
+  const alias = argv.alias || argv.host;
+  if (!alias || !argv.host || !argv.port) {
+    console.error('Usage: --add-server --alias NAME --host HOST --port PORT [--version v]');
+    process.exit(1);
+  }
+  serverRegistry.upsert({ alias, host: argv.host, port: argv.port, version: argv.version || 'auto' });
+  console.log(`Saved server '${alias}' -> ${argv.host}:${argv.port} (${argv.version || 'auto'})`);
+  process.exit(0);
+}
+
+if (argv['remove-server']) {
+  const removed = serverRegistry.remove(argv['remove-server']);
+  console.log(removed ? `Removed '${argv['remove-server']}'` : `No server '${argv['remove-server']}' found`);
+  process.exit(0);
+}
+
+let serverOverride = null;
+if (argv.server) {
+  const entry = serverRegistry.get(argv.server);
+  if (!entry) {
+    console.error(`No cached server '${argv.server}' found. Use --add-server to add.`);
+    process.exit(1);
+  }
+  serverOverride = { host: entry.host, port: entry.port, version: entry.version };
+  serverRegistry.touch(entry.alias);
+  console.log(`[Server] Selected: ${entry.alias} -> ${entry.host}:${entry.port} (${entry.version})`);
+}
+
+const config = await ConfigLoader.loadConfig('./src/config/config.json', serverOverride);
 
 // Create shared coordinator for multi-bot synchronization
 const sharedCoordinator = new BotCoordinator();
@@ -75,6 +138,16 @@ async function spawnBots(count) {
     try {
       const botController = new BotController(config, null, sharedCoordinator);
       await botController.start(); // Wait for successful login
+      // Update server cache lastUsed
+      try {
+        serverRegistry.upsert({
+          alias: config.host,
+          host: config.host,
+          port: config.port,
+          version: config.version,
+          lastUsed: Date.now()
+        });
+      } catch (_) {}
       bots.push(botController);
       console.log(`✅ Bot ${i + 1}/${count} logged in successfully!\n`);
       

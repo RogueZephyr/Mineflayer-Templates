@@ -3,11 +3,18 @@ import path from 'path';
 import Ajv from 'ajv';
 
 class ConfigLoader {
-  static async loadConfig(filePath = './src/config/config.json') {
+  static async loadConfig(filePath = './src/config/config.json', serverOverride = null) {
     const absolutePath = path.resolve(filePath);
     try {
       const data = await fs.readFile(absolutePath, 'utf8');
       const config = JSON.parse(data);
+
+      // Apply server override (host, port, version)
+      if (serverOverride) {
+        if (serverOverride.host) config.host = serverOverride.host;
+        if (serverOverride.port) config.port = Number(serverOverride.port);
+        if (serverOverride.version) config.version = serverOverride.version;
+      }
 
       // Validate structure
       const ajv = new Ajv();
@@ -29,7 +36,7 @@ class ConfigLoader {
         throw new Error(`Invalid configuration structure: ${errors}`);
       }
 
-      console.log(`[CONFIG] Loaded successfully from ${absolutePath}`);
+      console.log(`[CONFIG] Loaded successfully from ${absolutePath}${serverOverride ? ' (override applied)' : ''}`);
       return config;
     } catch (err) {
       console.error(`[CONFIG] Error loading config: ${err.message}`);

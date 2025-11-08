@@ -1,5 +1,48 @@
 # CHANGELOG - ToolHandler Integration & Refactoring
 
+## Version 2.1.0 - November 8, 2025
+
+### 🌐 Network & Infrastructure Features
+
+#### New Features
+- **Proxy Rotation System** - Multi-proxy support with pool-based rotation
+  - `ProxyManager.js` - Full proxy pool management with per-instance assignment
+  - `data/proxies.json` - Proxy pool configuration with rotation settings
+  - Sequential and random rotation modes
+  - Instance-based proxy assignment (each bot gets unique IP)
+  - Static state management for rotation persistence across restarts
+  - External IP verification via `!proxy ip` command and api.ipify.org
+  - Automatic IP logging on bot start (configurable via `proxy.ipCheckOnStart`)
+
+- **Server Registry & Selector** - Easy server switching with caching
+  - `ServerRegistry.js` - Manage cached server entries with CRUD operations
+  - `data/servers.json` - Persistent server cache with lastUsed timestamps
+  - CLI flags: `--server`, `--add-server`, `--list-servers`, `--remove-server`
+  - Server override support in ConfigLoader
+  - Automatic cache updates after successful login
+
+- **Console Command Isolation** - Console commands no longer send replies in-game
+  - Added `_consoleCommandActive` flag in ChatCommandHandler
+  - Temporary bot.chat/whisper override during console command execution
+  - Console-only output for administrative commands
+
+#### Bug Fixes
+- Fixed proxy command registration outside class scope (TypeError)
+- Fixed "unsupported protocol version: auto" error (defaults to "1.21.1")
+- Updated ProxyManager to use instance-specific logging throughout
+- All proxy methods now support both rotation pool and config-based proxies
+
+#### Configuration Changes
+- Extended `config.json` with `proxy.ipCheckOnStart` flag
+- Server connection details now support runtime override
+- Proxy configuration enhanced with rotation pool support
+
+#### Documentation
+- Added `PROXY_SETUP.md` - Comprehensive proxy configuration guide
+- Added `CHAT_DEBUG_LOGGER.md` - Chat logging documentation
+
+---
+
 ## Version 2.0.0 - November 5, 2025
 
 ### 🔧 Major Refactoring: ToolHandler Integration

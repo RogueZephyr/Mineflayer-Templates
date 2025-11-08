@@ -7,9 +7,27 @@
   "version": "1.21.1",
   "master": "RogueZ3phyr",
   
+  "_proxy": "Proxy Settings - Route bot connections through a proxy (requires 'socks' module: npm install socks)",
+  "proxy": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 9050,
+    "type": 5,
+    "ipCheckOnStart": true,
+    "_typeHelp": "4 for SOCKS4, 5 for SOCKS5",
+    "username": "",
+    "password": "",
+    "_authHelp": "Leave username/password empty if proxy doesn't require authentication"
+  },
+  
   "_general": "General Bot Settings",
   "debug": true,
   "enabledBehaviors": ["look"],
+  
+  "_chatDebugLogger": "Chat Debug Logger - Logs all chat events with raw formats for debugging server-specific chat",
+  "chatDebugLogger": {
+    "enabled": true
+  },
   
   "behaviors": {
     "_lookBehavior": "Look Behavior - Bot looks at nearby entities and players",
