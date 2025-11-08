@@ -353,4 +353,66 @@ See `roadmap.md` for planned features:
 - [ ] Bone meal automation
 - [ ] Strip log crafting
 - [ ] Charcoal production
-- [ ] Build scaffolding for tall trees
+
+## Technical Implementation Notes
+
+### Scaffolding System (v2.2.0+)
+WoodcuttingBehavior uses the new **ScaffoldingUtil** which provides advanced scaffolding management with mineflayer-pathfinder integration:
+
+```javascript
+// ScaffoldingUtil is automatically initialized in BotController
+// Usage in WoodcuttingBehavior:
+
+// Start tracking placed blocks
+bot.scaffoldingUtil.startTracking();
+
+// Climb using PathfindingUtil with scaffolding mode
+await bot.pathfindingUtil.goto(
+  new Vec3(x, targetY, z),
+  15000,
+  'scaffold_climb',
+  1.5,
+  { scaffolding: true, aggressive: false }
+);
+
+// Automatic cleanup of placed scaffolding
+await bot.scaffoldingUtil.cleanup(basePos, 5);
+```
+
+**Key Features:**
+- **Automatic lag compensation** - Adjusts timing based on server ping
+- **Block tracking** - Precisely tracks all placed scaffolding blocks
+- **Smart cleanup** - Removes blocks top-to-bottom for safety
+- **Configurable materials** - Supports multiple block types
+- **Safety checks** - Prevents dangerous situations (lava, falling blocks)
+- **Seamless integration** - Works directly with PathfindingUtil
+
+**Configuration:**
+```json
+{
+  "behaviors": {
+    "woodcutting": {
+      "scaffoldBlocks": ["dirt", "cobblestone", "netherrack"],
+      "cleanupScaffold": true,
+      "scaffolding": {
+        "basePlaceCost": 10,
+        "baseDigCost": 40,
+        "lagThresholdMs": 100,
+        "allowParkour": false,
+        "trackPlacedBlocks": true
+      }
+    }
+  }
+}
+```
+
+**Benefits over previous implementation:**
+- More reliable on laggy servers
+- Better resource management (tracks exact blocks placed)
+- Cleaner integration with pathfinding system
+- Easier to debug and maintain
+- Extensible for other climbing behaviors
+
+For detailed documentation, see [SCAFFOLDING.md](./SCAFFOLDING.md).
+
+This replaced the previous custom `PillarBuilder` utility for better stability and integration with the mineflayer ecosystem.

@@ -1,8 +1,5 @@
 // src/behaviors/WoodCuttingBehavior.js
 import { Vec3 } from 'vec3';
-import pkg from 'mineflayer-pathfinder';
-const { goals } = pkg;
-import PillarBuilder from '../utils/PillarBuilder.js';
 
 export default class WoodCuttingBehavior {
   constructor(bot, logger, master) {
@@ -492,21 +489,27 @@ export default class WoodCuttingBehavior {
     const logType = baseBlock ? baseBlock.name : null;
     const saplingType = logType ? this.treeTypes[logType] : null;
 
-    // Center-pillar approach using PillarBuilder utility
+    // Initialize scaffolding if available
+    let scaffoldingUtil = this.bot.scaffoldingUtil;
+    if (scaffoldingUtil) {
+      // Check if we have scaffolding blocks
+      const estimatedHeight = topY - baseY;
+      if (!scaffoldingUtil.hasEnoughBlocks(estimatedHeight + 5)) {
+        this._emitDebug('Warning: May not have enough scaffolding blocks');
+      }
+      
+      // Start tracking placed blocks for cleanup
+      scaffoldingUtil.startTracking();
+    } else {
+      this._emitDebug('Warning: ScaffoldingUtil not available');
+    }
+    
     const pillarX = basePos.x;
     const pillarZ = basePos.z;
-    let pillarTopY = baseY - 1; // start from ground below base log
+    let currentY = baseY;
     
-    // Initialize pillar builder with woodcutting timing settings
-    const pillarBuilder = new PillarBuilder(this.bot, this.logger, {
-      allowedBlocks: this.settings.scaffoldBlocks,
-      preDelayMs: this.settings.pillarPreDelayMs,
-      jumpDelayMs: this.settings.pillarJumpDelayMs,
-      placeDelayMs: this.settings.pillarPlaceDelayMs,
-      moveDelayMs: this.settings.pillarMoveDelayMs,
-      maxConsecutiveFailures: 5,
-      failureRetryDelayMs: 250
-    });
+    // Track placed scaffolding blocks for cleanup
+    const placedScaffold = [];
 
     // Helper: break any reachable remaining trunk logs from current position
     const breakReachableLogs = async () => {
@@ -534,6 +537,81 @@ export default class WoodCuttingBehavior {
         }
       }
       return brokeAny;
+    };
+    
+    // Helper: climb using pathfinder's scaffolding via PathfindingUtil
+    const climbUp = async (targetY, maxAttempts = 3) => {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const targetPos = new Vec3(pillarX, targetY, pillarZ);
+          
+          // Use PathfindingUtil with scaffolding mode (base or full based on config)
+          if (this.bot.pathfindingUtil) {
+            const scaffoldingMode = (this.bot.config && this.bot.config.behaviors && this.bot.config.behaviors.woodcutting && this.bot.config.behaviors.woodcutting.useBasicScaffolding)
+              ? 'base'
+              : 'full';
+
+            await this.bot.pathfindingUtil.goto(
+              targetPos,
+              15000,
+              'scaffold_climb',
+              1.5,
+              { scaffolding: true, aggressive: false, scaffoldingMode }
+            );
+          } else {
+            // Fallback: direct pathfinder usage (less optimal)
+            this._emitDebug('Using fallback pathfinder (PathfindingUtil not available)');
+            if (!this.bot.pathfinder) {
+              throw new Error('No pathfinder available');
+            }
+            
+            const goal = new this.bot.pathfinder.goals.GoalBlock(pillarX, targetY, pillarZ);
+            this.bot.pathfinder.setGoal(goal);
+            
+            // Wait for completion
+            await new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                this.bot.pathfinder.stop();
+                reject(new Error('Pathfinder timeout'));
+              }, 15000);
+              
+              const checkGoal = () => {
+                if (this.bot.entity.position.distanceTo(targetPos) < 1.5) {
+                  clearTimeout(timeout);
+                  this.bot.pathfinder.stop();
+                  resolve();
+                }
+              };
+              
+              const moveInterval = setInterval(() => {
+                if (!this.enabled || !this.isWorking) {
+                  clearTimeout(timeout);
+                  clearInterval(moveInterval);
+                  this.bot.pathfinder.stop();
+                  reject(new Error('Stopped'));
+                  return;
+                }
+                checkGoal();
+              }, 100);
+              
+              this.bot.once('goal_reached', () => {
+                clearTimeout(timeout);
+                clearInterval(moveInterval);
+                resolve();
+              });
+            });
+          }
+          
+          currentY = Math.floor(this.bot.entity.position.y);
+          this._emitDebug(`Climbed to Y=${currentY}`);
+          return true;
+        } catch (e) {
+          this._emitDebug(`Climb attempt ${attempt + 1} failed: ${e.message}`);
+          if (attempt === maxAttempts - 1) return false;
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+      return false;
     };
 
     let harvestedCount = 0;
@@ -584,7 +662,7 @@ export default class WoodCuttingBehavior {
         }
       }
 
-      // 3) If tree taller than 5 logs, move to base column, pillar up 3 at a time, and attempt to finish
+      // 3) If tree taller than 5 logs, use pathfinder scaffolding to climb
       const remainingExists = () => trunkPath.some(p => {
         const b = this.bot.blockAt(p);
         return b && this._isLog(b);
@@ -592,25 +670,22 @@ export default class WoodCuttingBehavior {
 
       if (remainingExists()) {
         // Ensure we're centered on the trunk column
-        await this._goto(new Vec3(pillarX, pillarTopY + 1, pillarZ), 8000, 'center_on_trunk');
-        // small settle delay before starting pillar
-        try { await new Promise(r => setTimeout(r, this.settings.pillarPreDelayMs)); } catch {}
+        await this._goto(new Vec3(pillarX, currentY, pillarZ), 8000, 'center_on_trunk');
+        await new Promise(r => setTimeout(r, 200));
       }
 
-      // Repeat: break reachable, then climb 3, until no logs left
+      // Repeat: break reachable logs, then climb up 3 blocks, until no logs left
       while (this.enabled && this.isWorking && remainingExists()) {
         await breakReachableLogs();
         if (!remainingExists()) break;
 
-        // Use pillar builder to climb 3 steps
-        const pillarColumn = new Vec3(pillarX, 0, pillarZ);
-        const result = await pillarBuilder.buildUp(pillarColumn, pillarTopY, 3);
+        // Climb up 3 blocks using pathfinder's scaffolding
+        const targetY = currentY + 3;
+        const climbed = await climbUp(targetY);
         
-        if (result.success) {
-          pillarTopY = result.finalY;
-          this._emitDebug(`Climbed ${result.stepsPlaced} steps, now at Y=${pillarTopY}`);
-        } else {
-          this._emitDebug('Failed to build pillar steps');
+        if (!climbed) {
+          this._emitDebug('Failed to climb further, stopping');
+          break;
         }
       }
     } catch (e) {
@@ -619,9 +694,57 @@ export default class WoodCuttingBehavior {
 
     this._emitDebug(`Harvested ${harvestedCount} logs (bottom-up)`);
     
-    // Optional: cleanup placed steps using pillar builder
+    // Optional: cleanup placed scaffolding blocks
     if (this.settings.cleanupScaffold) {
-      await pillarBuilder.cleanup(this.settings.cleanupDigDelayMs);
+      this._emitDebug('Cleaning up scaffolding...');
+      try {
+        if (scaffoldingUtil) {
+          // Stop tracking and use ScaffoldingUtil's cleanup
+          scaffoldingUtil.stopTracking();
+          const removed = await scaffoldingUtil.cleanup(basePos, 5);
+          this._emitDebug(`ScaffoldingUtil removed ${removed} blocks`);
+        } else {
+          // Fallback: manual cleanup (scan and remove)
+          this._emitDebug('Using fallback cleanup (ScaffoldingUtil not available)');
+          const cleanupRadius = 3;
+          for (let x = pillarX - cleanupRadius; x <= pillarX + cleanupRadius; x++) {
+            for (let z = pillarZ - cleanupRadius; z <= pillarZ + cleanupRadius; z++) {
+              for (let y = baseY - 1; y <= topY + 5; y++) {
+                const pos = new Vec3(x, y, z);
+                const block = this.bot.blockAt(pos);
+                
+                if (block && this.settings.scaffoldBlocks.includes(block.name)) {
+                  const dist = this.bot.entity.position.distanceTo(pos);
+                  
+                  if (dist > 4.5) {
+                    await this._goto(pos, 5000, 'cleanup');
+                  }
+                  
+                  const blockNow = this.bot.blockAt(pos);
+                  if (blockNow && this.settings.scaffoldBlocks.includes(blockNow.name)) {
+                    try {
+                      if (this.bot.toolHandler) {
+                        await this.bot.toolHandler.smartDig(blockNow);
+                      } else {
+                        await this.bot.dig(blockNow);
+                      }
+                      await new Promise(r => setTimeout(r, this.settings.cleanupDigDelayMs || 80));
+                    } catch (e) {
+                      // Ignore cleanup errors
+                    }
+                  }
+                }
+              }
+            }
+          }
+          this._emitDebug('Fallback cleanup complete');
+        }
+      } catch (e) {
+        this._emitDebug('Scaffolding cleanup error:', e.message);
+      }
+    } else if (scaffoldingUtil) {
+      // Still stop tracking even if cleanup is disabled
+      scaffoldingUtil.stopTracking();
     }
 
     // Replant only after entire tree and cleanup

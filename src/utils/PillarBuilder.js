@@ -2,8 +2,52 @@
 import { Vec3 } from 'vec3';
 
 /**
+ * @deprecated As of v2.1.1, use ScaffoldingUtil with mineflayer-pathfinder instead.
+ * 
  * PillarBuilder - Utility for building vertical pillars (jump-placing blocks underfoot)
  * Used for climbing trees, reaching high places, etc.
+ * 
+ * DEPRECATION NOTICE:
+ * This utility has been replaced by ScaffoldingUtil which properly integrates with
+ * mineflayer-pathfinder's native scaffolding functionality.
+ * 
+ * Benefits of using ScaffoldingUtil:
+ * - Automatic lag compensation based on server ping
+ * - Tracks placed blocks for reliable cleanup
+ * - Configurable scaffolding materials
+ * - Safety checks and collision prevention
+ * - Better integration with PathfindingUtil
+ * - More reliable block placement timing
+ * - Native support for different block types
+ * - Handles uneven terrain better
+ * 
+ * Migration example:
+ * ```javascript
+ * // Old way (PillarBuilder)
+ * const pillarBuilder = new PillarBuilder(bot, logger);
+ * await pillarBuilder.buildUp(column, startY, 3);
+ * 
+ * // New way (ScaffoldingUtil with PathfindingUtil)
+ * // In BotController, ScaffoldingUtil is automatically initialized
+ * // Then use PathfindingUtil with scaffolding mode:
+ * await bot.pathfindingUtil.goto(
+ *   targetPos,
+ *   15000,
+ *   'climb',
+ *   1.5,
+ *   { scaffolding: true }
+ * );
+ * 
+ * // Or use ScaffoldingUtil directly:
+ * bot.scaffoldingUtil.startTracking();
+ * const movements = bot.scaffoldingUtil.createScaffoldingMovements({ aggressive: false });
+ * bot.pathfinder.setMovements(movements);
+ * // ... pathfind to target ...
+ * await bot.scaffoldingUtil.cleanup(centerPos, 5);
+ * ```
+ * 
+ * This file is kept for backward compatibility but will be removed in a future version.
+ * See ScaffoldingUtil.js and PathfindingUtil.js for the new implementation.
  */
 export default class PillarBuilder {
   constructor(bot, logger, config = {}) {

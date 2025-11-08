@@ -23,6 +23,7 @@ import SaveChestLocation from '../utils/SaveChestLocation.js';
 import DebugTools from '../utils/DebugTools.js';
 import PathfindingUtil from '../utils/PathfindingUtil.js';
 import ToolHandler from '../utils/ToolHandler.js';
+import ScaffoldingUtil from '../utils/ScaffoldingUtil.js';
 import AreaRegistry from '../state/AreaRegistry.js';
 import ProxyManager from '../utils/ProxyManager.js';
 import fs from 'fs';
@@ -325,6 +326,28 @@ export default class BotController {
     this.pathfindingUtil = new PathfindingUtil(this.bot, this.coordinator, this.logger, this.config);
     this.bot.pathfindingUtil = this.pathfindingUtil;
     this.logger.info('[BotController] PathfindingUtil initialized with path caching');
+    
+    // Initialize scaffolding utility unless basic mode is requested
+    const useBasicScaffolding = !!(this.config.behaviors?.woodcutting?.useBasicScaffolding);
+    if (!useBasicScaffolding) {
+      const scaffoldConfig = this.config.behaviors?.woodcutting?.scaffolding || {};
+      this.scaffoldingUtil = new ScaffoldingUtil(this.bot, this.logger, {
+        allowedBlocks: scaffoldConfig.allowedBlocks || this.config.behaviors?.woodcutting?.scaffoldBlocks || ['dirt', 'cobblestone'],
+        basePlaceCost: scaffoldConfig.basePlaceCost || 10,
+        baseDigCost: scaffoldConfig.baseDigCost || 40,
+        lagThresholdMs: scaffoldConfig.lagThresholdMs || 100,
+        allowParkour: scaffoldConfig.allowParkour === true,
+        allowSprinting: scaffoldConfig.allowSprinting === true,
+        maxDropDown: scaffoldConfig.maxDropDown || 4,
+        trackPlacedBlocks: scaffoldConfig.trackPlacedBlocks !== false,
+        cleanupDelayMs: scaffoldConfig.cleanupDelayMs || 80
+      });
+      this.bot.scaffoldingUtil = this.scaffoldingUtil;
+      this.logger.info('[BotController] ScaffoldingUtil initialized (full mode)');
+    } else {
+      this.logger.info('[BotController] Basic scaffolding mode enabled (no ScaffoldingUtil)');
+    }
+    this.bot.scaffoldingMode = useBasicScaffolding ? 'base' : 'full';
 
     this.logger.info(`${chalk.green(this.username)} has loaded correctly`)
     //this.bot.chat(`/msg ${this.master} Hello! Test environment loaded!`);

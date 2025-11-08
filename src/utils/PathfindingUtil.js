@@ -2,7 +2,8 @@
 import { Vec3 } from 'vec3';
 import pkg from 'mineflayer-pathfinder';
 import PathCache from './PathCache.js';
-const { goals } = pkg;
+import mcDataFactory from 'minecraft-data';
+const { goals, Movements } = pkg;
 
 /**
  * Centralized pathfinding utility with collision avoidance and path caching
@@ -28,14 +29,18 @@ export default class PathfindingUtil {
   }
 
   /**
-   * Enhanced goto with collision avoidance
+   * Enhanced goto with collision avoidance and optional scaffolding
    * @param {Vec3|Object} pos - Target position
    * @param {number} timeoutMs - Timeout in milliseconds
    * @param {string} task - Task description for debugging
    * @param {number} range - Acceptable distance from target (default 1.5)
+   * @param {Object} options - Additional options
+   * @param {Movements} options.movements - Custom Movements to use (e.g., for scaffolding)
+   * @param {boolean} options.scaffolding - Enable scaffolding mode (requires ScaffoldingUtil)
+   * @param {boolean} options.aggressive - Use aggressive scaffolding settings
    * @returns {Promise<void>}
    */
-  async goto(pos, timeoutMs = 30000, task = 'generic', range = 1.5) {
+  async goto(pos, timeoutMs = 30000, task = 'generic', range = 1.5, options = {}) {
     if (!pos) throw new Error('goto: pos required');
 
     // Normalize position
@@ -64,6 +69,46 @@ export default class PathfindingUtil {
         this.coordinator.clearPathfindingGoal(this.bot.username);
       }
       throw new Error('Pathfinder not available');
+    }
+    
+    // Apply custom movements if provided (for scaffolding, etc.)
+    let originalMovements = null;
+    if (options.movements) {
+      originalMovements = this.bot.pathfinder.movements;
+      this.bot.pathfinder.setMovements(options.movements);
+      this._log('Applied custom movements');
+    } else if (options.scaffolding) {
+      // Determine scaffolding mode: base (mineflayer only) or full (ScaffoldingUtil)
+      const useBasic = options.scaffoldingMode
+        ? (options.scaffoldingMode === 'base')
+        : !!(this.bot.config && this.bot.config.behaviors && this.bot.config.behaviors.woodcutting && this.bot.config.behaviors.woodcutting.useBasicScaffolding);
+
+      originalMovements = this.bot.pathfinder.movements;
+
+      if (!useBasic && this.bot.scaffoldingUtil && typeof this.bot.scaffoldingUtil.createScaffoldingMovements === 'function') {
+        // Full-featured movements via ScaffoldingUtil
+        const scaffoldMovements = this.bot.scaffoldingUtil.createScaffoldingMovements({
+          aggressive: options.aggressive === true
+        });
+        this.bot.pathfinder.setMovements(scaffoldMovements);
+        this._log('Applied full ScaffoldingUtil movements');
+      } else {
+        // Basic movements: mineflayer-pathfinder only (no extras)
+        const mcData = mcDataFactory(this.bot.version);
+        const basicMoves = new Movements(this.bot, mcData);
+        basicMoves.allow1by1towers = true;
+
+        // Configure scaffolding blocks from config
+        const allowed = (this.bot.config && this.bot.config.behaviors && this.bot.config.behaviors.woodcutting && this.bot.config.behaviors.woodcutting.scaffoldBlocks) || ['dirt', 'cobblestone'];
+        basicMoves.scaffoldingBlocks = [];
+        for (const name of allowed) {
+          const item = mcData.itemsByName[name];
+          if (item && item.id) basicMoves.scaffoldingBlocks.push(item.id);
+        }
+        // Keep defaults for everything else (no extra safety/lag tweaks)
+        this.bot.pathfinder.setMovements(basicMoves);
+        this._log('Applied basic mineflayer-pathfinder scaffolding movements');
+      }
     }
 
     try {
@@ -116,12 +161,23 @@ export default class PathfindingUtil {
         
         await this._waitForSettle(); // Give bot time to settle after pathfinding
       } finally {
+        // Restore original movements if they were changed
+        if (originalMovements) {
+          this.bot.pathfinder.setMovements(originalMovements);
+          this._log('Restored original movements');
+        }
+        
         // Always clear goal, even on failure
         if (this.coordinator) {
           this.coordinator.clearPathfindingGoal(this.bot.username);
         }
       }
     } catch (e) {
+      // Restore movements on error
+      if (originalMovements) {
+        this.bot.pathfinder.setMovements(originalMovements);
+      }
+      
       // Clear goal on error (redundant with finally, but explicit for clarity)
       if (this.coordinator) {
         this.coordinator.clearPathfindingGoal(this.bot.username);

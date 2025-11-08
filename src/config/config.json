@@ -26,13 +26,13 @@
   
   "_chatDebugLogger": "Chat Debug Logger - Logs all chat events with raw formats for debugging server-specific chat",
   "chatDebugLogger": {
-    "enabled": true
+    "enabled": false
   },
   
   "behaviors": {
     "_lookBehavior": "Look Behavior - Bot looks at nearby entities and players",
     "look": {
-      "updateInterval": 20,
+      "updateInterval": 5,
       "maxDistance": 6
     },
     
@@ -70,6 +70,8 @@
       "searchRadius": 50,
       
       "_pillarSettings": "Pillar/Scaffold Settings - Blocks used for climbing tall trees",
+  "useBasicScaffolding": false,
+  "_useBasicScaffoldingHelp": "If true, use base mineflayer-pathfinder scaffolding only (no lag compensation or tracking). If false, use full ScaffoldingUtil.",
       "scaffoldBlocks": ["dirt", "cobblestone"],
       "cleanupScaffold": true,
       "maxTrunkHeight": 32,
