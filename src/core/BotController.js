@@ -53,7 +53,7 @@ export default class BotController {
     }
   }
 
-  constructor(config, username = null, coordinator = null) {
+  constructor(config, username = null, coordinator = null, instanceId = 0) {
     // Ensure username list is loaded
     BotController.loadUsernameList();
     this.username = username || this.getAvailableUsername();
@@ -65,6 +65,7 @@ export default class BotController {
     this.master = 'RogueZ3phyr';
     this.hungerCheckInterval = null;
     this.coordinator = coordinator; // Shared coordinator for multi-bot sync
+    this.instanceId = instanceId; // Bot instance ID for proxy rotation
   }
 
   getAvailableUsername() {
@@ -100,7 +101,7 @@ export default class BotController {
       };
 
       // Initialize proxy manager
-      const proxyManager = new ProxyManager(this.config, this.logger, i);
+      const proxyManager = new ProxyManager(this.config, this.logger, this.instanceId);
       
       // Assign proxy from pool if rotation is enabled
       if (ProxyManager.proxyPool?.rotation?.enabled) {

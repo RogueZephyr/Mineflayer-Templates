@@ -102,6 +102,7 @@ export default class ChatCommandHandler {
             const originalChat = this.bot.chat ? this.bot.chat.bind(this.bot) : null;
             const originalWhisper = this.bot.whisper ? this.bot.whisper.bind(this.bot) : null;
             this._consoleCommandActive = true;
+            this._originalBotChat = originalChat; // Store for commands that need real chat (like !say)
             if (originalChat) {
               this.bot.chat = (msg) => { if (msg) this.logger.info(`[Console Reply] ${msg}`); };
             }
@@ -116,6 +117,7 @@ export default class ChatCommandHandler {
             } finally {
               // Restore originals
               this._consoleCommandActive = false;
+              this._originalBotChat = null;
               if (originalChat) this.bot.chat = originalChat;
               if (originalWhisper) this.bot.whisper = originalWhisper;
             }
@@ -610,7 +612,12 @@ export default class ChatCommandHandler {
     this.register('say', (username, args, isPrivate) => {
       const message = args.join(' ');
       if (message.length > 0) {
-        this.reply(username, message, isPrivate);
+        // Always send to in-game chat, bypassing console override
+        if (this._originalBotChat) {
+          this._originalBotChat(message);
+        } else {
+          this.bot.chat(message);
+        }
       }
     });
 

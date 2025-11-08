@@ -1,6 +1,32 @@
 # MineFlayer Bot — Feature Roadmap & Design Document
 
-**Last updated:** 2025-11-04
+**Last updated:** November 8, 2025
+
+---
+
+## 📊 Implementation Status Overview
+
+### ✅ Completed (Phase 0 - Foundation)
+- **Core Engine:** BotController, BotCoordinator, ConfigLoader
+- **Pathfinding:** PathfinderBehavior, PathfindingUtil, PathCache
+- **Behaviors:** 12 modules (Farming, Mining, Woodcutting, Eating, Sleeping, etc.)
+- **Tool Management:** ToolHandler with 200+ block mappings
+- **Inventory Management:** DepositBehavior, InventoryBehavior, chest location tracking
+- **Network:** ProxyManager with rotation, ServerRegistry with CLI
+- **Communication:** ChatCommandHandler with 50+ commands, console isolation
+- **Utilities:** Logger, DebugTools, WhitelistManager, ChatDebugLogger
+
+### 🔄 In Progress (Phase 1)
+- Advanced mining patterns (strip-mining ✅, quarry pending, vein-mining pending)
+- Multi-bot coordination framework (basic ✅, advanced pending)
+- Crafting system (planned)
+
+### ⏳ Planned (Phase 2+)
+- Combat & defense system
+- GOAP/BT/FSM hybrid reasoning
+- Task queue broker (Redis)
+- Web dashboard
+- Fabric mod integration
 
 ---
 
@@ -10,11 +36,11 @@ This document captures a practical, modular roadmap to evolve the current MineFl
 
 Goals:
 
-* Stable, testable modules for core tasks (pathfinding, farming, inventory management).
-* Add advanced task modules (mining, woodcutting, crafting, combat).
-* Introduce hybrid decision-making (State Machines for micro-control, Behavior Trees for actions, GOAP for high-level planning).
-* Build multi-bot cooperation and a task/transport pipeline.
-* Ensure easy debugging, metrics, and deterministic replay for testing.
+* ✅ Stable, testable modules for core tasks (pathfinding, farming, inventory management).
+* 🔄 Add advanced task modules (mining ✅, woodcutting ✅, crafting ⏳, combat ⏳).
+* ⏳ Introduce hybrid decision-making (State Machines for micro-control, Behavior Trees for actions, GOAP for high-level planning).
+* 🔄 Build multi-bot cooperation and a task/transport pipeline.
+* 🔄 Ensure easy debugging, metrics, and deterministic replay for testing.
 
 Assumptions & constraints:
 
@@ -27,128 +53,209 @@ Assumptions & constraints:
 
 ## 2. High-level architecture
 
-**Layers**
+**Layers** (✅ = Implemented, 🔄 = Partial, ⏳ = Planned)
 
-1. **Core Engine** — mineflayer instance wrapper, networking, chunk management, event emitter, safety checks.
-2. **Perception & World Model** — local map / memory, block and entity caches, chest/inventory index, metadata (last seen, durability, stack counts).
-3. **Utilities** — pathfinding (A* / D* Lite variants), item planner, recipe database, chest manager.
-4. **Task Modules** — Farming, Mining, Woodcutting, Crafting, Combat, Courier.
-5. **Reasoning & Planner** — hybrid: GOAP for high-level goals, Behavior Tree (BT) for mid-level action sequencing, Finite State Machine (FSM) for micro-control and retry logic.
-6. **Coordination Layer** — task queue, pub/sub, job broker for multi-bot cooperation.
-7. **Persistence & Telemetry** — DB for job states, inventories, logs, and metrics for testing.
+1. ✅ **Core Engine** — BotController (mineflayer wrapper), BotCoordinator (multi-bot), ConfigLoader (validation), networking, chunk management, event emitter, safety checks.
+2. 🔄 **Perception & World Model** — Basic chest/inventory tracking (✅), area registry (✅), full world model (⏳).
+3. ✅ **Utilities** — PathfindingUtil with A* (✅), PathCache (✅), ToolHandler (✅), chest manager (✅), recipe database (⏳).
+4. 🔄 **Task Modules** — Farming (✅), Mining (✅), Woodcutting (✅), ItemCollector (✅), Crafting (⏳), Combat (⏳), Courier (⏳).
+5. ⏳ **Reasoning & Planner** — GOAP for high-level goals (⏳), Behavior Tree (BT) for mid-level actions (⏳), FSM for micro-control (⏳).
+6. 🔄 **Coordination Layer** — BotCoordinator basic framework (✅), task queue (⏳), pub/sub (⏳), job broker (⏳).
+7. 🔄 **Persistence & Telemetry** — JSON file storage for configs/data (✅), ChatDebugLogger (✅), DB for job states (⏳), metrics dashboard (⏳).
 
-**Communication**
+**Communication** (Status)
 
-* Local IPC / Redis pubsub for message passing between bots.
-* REST or WebSocket admin API for manual commands & monitoring.
-* Centralized job store (Redis list / MySQL queue) for durable tasks.
+* ✅ Console command interface via ChatCommandHandler (50+ commands).
+* ✅ In-game chat command handling with WhitelistManager permissions.
+* ✅ ProxyManager with SOCKS proxy rotation for network isolation.
+* ✅ ServerRegistry for multi-server management.
+* ⏳ Local IPC / Redis pubsub for message passing between bots.
+* ⏳ REST or WebSocket admin API for manual commands & monitoring.
+* ⏳ Centralized job store (Redis list / MySQL queue) for durable tasks.
+
+**Implemented Infrastructure:**
+- ✅ Multi-bot spawning with instance IDs and username rotation
+- ✅ Proxy rotation system (sequential/random) for unique IPs per bot
+- ✅ Server caching and CLI-based server selection
+- ✅ Console command isolation (console replies don't leak to in-game)
+- ✅ Whitelist-based permission system
+- ✅ Chat debug logging with JSON persistence
+- ✅ Comprehensive tool management (200+ block-to-tool mappings)
 
 ---
 
 ## 3. Core Systems (detailed)
 
-### 3.1 Pathfinding
+### 3.1 Pathfinding ✅ IMPLEMENTED
 
 **Goal:** Robust A* with fallback behaviors for dynamic environments.
 
-Key features:
+**Status:** Core implementation complete via PathfinderBehavior, PathfindingUtil, and PathCache.
 
-* **Grid resolution:** block-cell graph with 3D nodes + agent height.
-* **Cost model:** block walkable, block breaking cost (time & tool use), dangerous blocks (lava), water penalty.
-* **Heuristics:** Euclidean or Manhattan 3D with tie-breaking.
-* **Dynamic replanning:** short-lived paths (recompute every N ticks or on chunk changes) and D* Lite for long journeys.
-* **Optimization:** caching of path fragments, local smoothing to reduce micro-turning.
-* **Safety wrappers:** pre-check for fall risk, mob density, environmental hazards.
+**Implemented features:**
+
+* ✅ **Grid resolution:** block-cell graph with 3D nodes + agent height (via mineflayer-pathfinder).
+* ✅ **Cost model:** block walkable, block breaking cost, dangerous blocks (lava), water penalty.
+* ✅ **Heuristics:** Euclidean or Manhattan 3D with tie-breaking.
+* ✅ **Path caching:** PathCache for fragment caching, local smoothing to reduce micro-turning.
+* ✅ **Movement APIs:** goto(x, y, z), follow(entity), gotoPlayer(username), stop().
+* 🔄 **Dynamic replanning:** Basic recompute on failure, D* Lite for long journeys (pending).
+* 🔄 **Safety wrappers:** Pre-check for fall risk, mob density (partial implementation).
+
+**Implemented modules:**
+- `PathfinderBehavior.js` - Core pathfinding integration with mineflayer-pathfinder
+- `PathfindingUtil.js` - Centralized pathfinding utilities with high-level APIs
+- `PathCache.js` - Path caching and optimization for repeated routes
 
 Implementation notes:
 
-* Use mineflayer-pathfinder as baseline; extend with custom cost functions and break/placed-block support.
-* Support "move to block but break if needed" semantics for mining/woodcutting.
+* ✅ Using mineflayer-pathfinder as baseline with custom cost functions.
+* ✅ "Move to block but break if needed" semantics working in mining/woodcutting.
+* ⏳ D* Lite for dynamic environments planned for future optimization.
 
-### 3.2 Perception & World Model
+### 3.2 Perception & World Model 🔄 PARTIAL
 
 **Goal:** Small, queryable memory for fast decisions and offline replay.
 
-Data to store:
+**Status:** Basic tracking implemented, full world model pending.
 
-* Blocks seen with timestamp and source chunk coordinates.
-* Chest locations and contents (cached from open/inspect); chest lease when multiple bots might access.
-* Entities (mobs/players) with last-seen TTL.
-* Tool status and held items.
+**Implemented:**
+* ✅ Chest locations tracked via SaveChestLocation utility
+* ✅ Area definitions via AreaRegistry (farming/woodcutting zones)
+* ✅ Bed locations via BedRegistry
+* ✅ Home locations via HomeBehavior
+* ✅ Tool status and inventory tracking via InventoryBehavior
+* ⏳ Block memory with timestamps (pending)
+* ⏳ Entity tracking with TTL (pending)
+* ⏳ Full chunk scanning and persistence (pending)
 
-APIs:
+**Planned APIs:**
 
-* `world.findNearestBlock(filter, maxDistance)`
-* `world.queryChests(filter)`
-* `world.getEntityById(id)`
+* ⏳ `world.findNearestBlock(filter, maxDistance)`
+* ⏳ `world.queryChests(filter)`
+* ⏳ `world.getEntityById(id)`
 
 Replication for multi-bot:
 
 * Each bot keeps local memory; central index (Redis hash) holds authoritative chest & depot locations and global task registry.
 
-### 3.3 Inventory & Chest Management
+### 3.3 Inventory & Chest Management ✅ IMPLEMENTED
 
 **Goal:** Deterministic deposit/withdraw flows, stack merging, and chest reservation.
 
-Key features:
+**Status:** Core functionality implemented via DepositBehavior and InventoryBehavior.
 
-* Chest metadata (capacity, open/closed, reserved_by, last_used_at).
-* Lease/retry pattern for chest access: `reserveChest(chestId, botId, ttl)`.
-* Priority levels: `high` (fuel/tools), `normal` (ore/wood), `low` (waste).
-* Automatic restock: bots check tool durability and craft/restock from nearby chests.
+**Implemented features:**
+
+* ✅ Chest location tracking and persistence (`SaveChestLocation`, `data/chestLocations.json`)
+* ✅ Deposit behavior with nearest chest selection
+* ✅ Inventory monitoring and status reporting
+* ✅ Tool durability tracking via ToolHandler
+* ✅ Automatic tool switching when durability low
+* ⏳ Chest metadata (capacity, reserved_by, last_used_at) - pending
+* ⏳ Lease/retry pattern for chest access - pending
+* ⏳ Priority levels for items - pending
+* ⏳ `pullRecipeItems` for crafting - pending
+
+**Implemented modules:**
+- `DepositBehavior.js` - Automatic item deposit to chests
+- `InventoryBehavior.js` - Inventory monitoring and management
+- `SaveChestLocation.js` - Chest position tracking and commands
+- `ToolHandler.js` - Tool management with durability protection
 
 APIs & Behaviors:
 
-* `depositToNearest(chestFilter, items)` with retries and partial-deposit support.
-* `pullRecipeItems(recipe, chestFilter)` attempts to gather components from multiple chests.
-* Swap-in and auto-equip tools when durability low.
+* ✅ `depositToNearest()` with basic retry support
+* ⏳ `pullRecipeItems(recipe, chestFilter)` - planned for crafting
+* ✅ Auto-equip tools when needed (via ToolHandler)
 
 Consistency & edge cases:
 
-* Watch for desynced inventories (server lag) — always re-validate after chest transactions.
+* 🔄 Watch for desynced inventories (server lag) — partial validation implemented
 
-### 3.4 Farming
+### 3.4 Farming ✅ IMPLEMENTED
 
 **Goal:** Reliable crop lifecycle operations (plant, hydrate, harvest, replant). Works with wheat, carrots, potatoes, beetroot, pumpkins, melons, sugarcane, and tree saplings (for wood module tie-in).
 
+**Status:** Fully implemented via FarmBehavior with area-based farming.
+
+**Implemented features:**
+* ✅ Scanning farmland for growth stage via block states
+* ✅ Harvest and replant logic
+* ✅ Area definition via `!setarea farm start/end`
+* ✅ Seed buffer management
+* ✅ Commands: `!farm start`, `!farm stop`
+* 🔄 Irrigation awareness - basic (needs enhancement)
+* ⏳ Auto-deposit to chest - pending
+* ⏳ Torch placement for night operations - pending
+
+**Implemented module:**
+- `FarmBehavior.js` - Complete farming cycle implementation
+
 Core behavior:
 
-* Scanning farmland chunk for growth stage via block states.
-* Irrigation awareness: track water blocks nearby for hydration.
-* Replant rules: maintain minimum seed buffer; if seeds < threshold, request via courier or craft.
-* Auto-produce: deposit harvested items to configured chest.
+* ✅ Scanning farmland chunk for growth stage via block states.
+* 🔄 Irrigation awareness: track water blocks nearby for hydration (basic).
+* 🔄 Replant rules: maintain minimum seed buffer.
+* ⏳ Auto-produce: deposit harvested items to configured chest (planned).
 
 Optimization:
 
-* Work in rows, maintain torch placement for nocturnal operations.
-* Chunk-based scheduling to avoid path thrash.
+* 🔄 Work in rows (basic pathfinding).
+* ⏳ Maintain torch placement for nocturnal operations (planned).
+* 🔄 Chunk-based scheduling to avoid path thrash (basic).
 
-### 3.5 Mining (Strip-mining, Quarry, Tunneler)
+### 3.5 Mining (Strip-mining, Quarry, Tunneler) 🔄 PARTIAL
 
 **Goal:** Modular mining strategies with inventory-aware stopping and chest dropoff.
 
-Modes:
+**Status:** Strip-mining and tunnel digging implemented, quarry mode pending.
 
-* **Strip-mining:** Manage tunnels (2×1) with side branches; pattern generator creates list of target tunnels.
-* **Quarry:** Square-area excavation, layer-by-layer, with stairway access.
-* **Tunneler:** Directional long tunnel with branch spacing.
+**Implemented modes:**
 
-Key features:
+* ✅ **Strip-mining:** Tunnel with configurable side branches via `!mine strip <dir> <length> <branches>`
+* ✅ **Tunneler:** Directional long tunnel via `!mine tunnel <dir> <length> [width] [height]`
+* ⏳ **Quarry:** Square-area excavation, layer-by-layer (planned)
 
-* Tool-aware block-breaking: predict required tools & durability, auto-restock or schedule return.
-* Torch planner: place torches at intervals, optionally place markers (blocks) for orientation.
-* Inventory full behavior: return to deposit chest, optionally handoff to courier.
-* Vein-mining enhancement: when ore discovered, vein-mine contiguous ore blocks first.
+**Implemented features:**
+
+* ✅ Tool-aware block-breaking via ToolHandler integration
+* ✅ Auto tool selection and durability management
+* ✅ Torch placement at intervals via PillarBuilder
+* ✅ Commands: `!mine strip/tunnel`, `!mine stop`, `!mine status`
+* ✅ Progress tracking and reporting
+* 🔄 Inventory full behavior (basic, needs enhancement)
+* ⏳ Vein-mining for ore clusters (planned)
+* ⏳ Ore detection and priority targeting (planned)
+
+**Implemented modules:**
+- `MiningBehavior.js` - Strip mining and tunnel digging with ToolHandler integration
+- `PillarBuilder.js` - Scaffold building and torch placement
 
 Implementation details:
 
-* Represent mining plan as sequence of `digActions` with coordinates and preconditions.
-* Use pathfinder with `allowedBreakableBlocks`.
-* Ensure safety: light level checks and mob-avoidance interrupts.
+* ✅ Mining plan as sequence of coordinates with direction
+* ✅ Pathfinder with block-breaking support
+* 🔄 Safety: light level checks (basic), mob-avoidance (pending)
 
-### 3.6 Wood Cutting & Tree Handling
+### 3.6 Wood Cutting & Tree Handling ✅ IMPLEMENTED
 
 **Goal:** Fully harvest trees and replant saplings while being careful about tree types and chunk boundaries.
+
+**Status:** Fully implemented via WoodCuttingBehavior with area-based operations.
+
+**Implemented features:**
+* ✅ Tree detection (log block + leaves signature)
+* ✅ Full tree harvesting via ToolHandler
+* ✅ Sapling collection
+* ✅ Area-based woodcutting via `!setarea wood start/end`
+* ✅ Commands: `!wood start`, `!wood stop`
+* ✅ Automatic tree scanning and targeting
+* ⏳ Sapling replanting (planned)
+* ⏳ Giant tree detection (2×2 trunks) (planned)
+
+**Implemented module:**
+- `WoodCuttingBehavior.js` - Tree detection and harvesting with ToolHandler integration
 
 Flow:
 
@@ -1004,3 +1111,100 @@ class BlockTracker {
 6. **Resource Planning**: Identify resource-rich areas
 
 This dashboard will transform your bot system from a black box into a fully transparent, manageable system with rich visualization and control capabilities.
+
+---
+
+## 📊 Current Implementation Summary (November 2025)
+
+### Completed Features (v2.1.0)
+
+#### Core Infrastructure ✅
+- **BotController** - Bot lifecycle management with multi-bot support
+- **BotCoordinator** - Basic multi-bot coordination framework
+- **ConfigLoader** - Configuration loading with JSON schema validation
+- **Multi-bot spawning** - Sequential spawn with configurable delays
+- **Instance tracking** - Unique IDs for each bot with username rotation
+
+#### Network & Proxy System ✅
+- **ProxyManager** - Complete SOCKS proxy support
+  - Proxy pool management with `data/proxies.json`
+  - Sequential and random rotation modes
+  - Per-instance proxy assignment (unique IP per bot)
+  - External IP verification via `!proxy ip` command
+  - Auto IP logging on bot start (`proxy.ipCheckOnStart`)
+- **ServerRegistry** - Server management with CLI
+  - Server cache in `data/servers.json`
+  - Flags: `--server`, `--add-server`, `--list-servers`, `--remove-server`
+  - Auto-update lastUsed timestamps
+
+#### Behavior Modules (12 total) ✅
+1. **PathfinderBehavior** - A* pathfinding with mineflayer-pathfinder
+2. **PathfindingUtil** - Centralized navigation APIs
+3. **LookBehavior** - Natural head movement
+4. **EatBehavior** - Auto food consumption
+5. **SleepBehavior** - Auto bed detection and sleeping
+6. **InventoryBehavior** - Inventory monitoring
+7. **ItemCollectorBehavior** - Auto item pickup
+8. **DepositBehavior** - Chest storage management
+9. **HomeBehavior** - Home location system
+10. **FarmBehavior** - Crop farming (plant, harvest, replant)
+11. **WoodCuttingBehavior** - Tree detection and harvesting
+12. **MiningBehavior** - Strip mining and tunnel digging
+
+#### Utility Systems ✅
+- **ToolHandler** - Centralized tool management
+  - 200+ block-to-tool mappings
+  - Smart tool selection and auto-switching
+  - Durability protection
+  - Tool status commands
+- **PathCache** - Path optimization and caching
+- **PillarBuilder** - Scaffold building for mining
+- **SaveChestLocation** - Chest location persistence
+- **WhitelistManager** - Player permission system
+- **ChatDebugLogger** - Advanced debug logging
+
+#### Communication ✅
+- **ChatCommandHandler** - 50+ commands
+  - Console command support with isolation
+  - In-game command handling
+  - Movement: come, goto, follow, stop
+  - Mining: mine strip/tunnel, status
+  - Farming: farm start/stop
+  - Tools: status, report, check, equip
+  - Home: sethome, home, ishome
+  - Utility: eat, sleep, drop, deposit
+  - Debug: debug on/off, loginv
+  - Admin: whitelist, proxy, say
+- **ChatLogger** - Chat message logging
+- **Logger** - Colored console output
+
+#### Data Storage ✅
+- `data/proxies.json` - Proxy pool config
+- `data/servers.json` - Server cache
+- `data/botNames.json` - Username pool
+- `data/chestLocations.json` - Chest storage
+- `data/homeLocations.json` - Home positions
+- `data/areas.json` - Farming/woodcutting zones
+- `data/whitelist.json` - Player permissions
+- `data/chat_debug_log.json` - Debug history
+
+### Statistics
+- **Total Lines of Code:** ~7,500+
+- **Modules:** 27 (12 behaviors + 12 utilities + 3 core)
+- **Commands:** 50+
+- **Supported Proxy Types:** SOCKS4, SOCKS5
+- **Supported Activities:** Mining, Farming, Woodcutting, Navigation, Inventory Management
+
+### Next Priority Features
+1. **Crafting System** - Automated crafting with recipe management
+2. **Combat Behavior** - Self-defense and mob combat
+3. **Vein Mining** - Ore cluster detection and mining
+4. **Task Queue Broker** - Redis-based multi-bot job system
+5. **Web Dashboard** - Real-time monitoring and control
+6. **GOAP Planner** - High-level goal planning
+
+---
+
+**Document Version:** 2.0  
+**Last Updated:** November 8, 2025  
+**Project Status:** Active Development - Phase 1 Complete

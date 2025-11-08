@@ -136,7 +136,7 @@ async function spawnBots(count) {
     console.log(`Starting bot ${i + 1}/${count}...`);
     
     try {
-      const botController = new BotController(config, null, sharedCoordinator);
+      const botController = new BotController(config, null, sharedCoordinator, i);
       await botController.start(); // Wait for successful login
       // Update server cache lastUsed
       try {
