@@ -110,8 +110,8 @@ export default class DebugTools {
         present: !!this.bot.pathfinder,
         methods: this.bot.pathfinder ? Object.keys(this.bot.pathfinder).slice(0, 30) : []
       };
-    } catch (e) {
-      out.error = String(e);
+  } catch (_e) {
+  out.error = String(_e);
     }
     return out;
   }
@@ -129,7 +129,7 @@ export default class DebugTools {
       const raw = await fs.readFile(this.diagnosticsFile, 'utf8');
       list = JSON.parse(raw);
       if (!Array.isArray(list)) list = [];
-    } catch (e) {
+  } catch (_e) {
       list = [];
     }
     list.push({ file: filename, timestamp: new Date().toISOString(), module: moduleName });

@@ -9,12 +9,20 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js -b 1 -n",
-    "install-deps": "node install.js"
+    "install-deps": "node install.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "ajv": "^8.17.1",
     "async-mutex": "^0.5.0",
     "chalk": "^5.6.2",
+    "dependencies": "^0.0.1",
     "figlet": "^1.9.3",
     "minecraft-data": "^3.67.0",
     "mineflayer": "^4.33.0",
@@ -25,7 +33,13 @@
     "yargs": "^18.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "globals": "^15.12.0",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.2.5",
+    "vitest": "^1.5.0"
   },
   "keywords": [
     "minecraft",

@@ -29,6 +29,28 @@ export default class PathCache {
     
     // Setup block update listeners for cache invalidation
     this._setupBlockListeners();
+    
+    // Track listener reference for cleanup
+    this._blockUpdateHandler = null;
+  }
+  
+  /**
+   * Dispose of all listeners and cleanup resources
+   * Called by BotController on shutdown to prevent memory leaks
+   */
+  dispose() {
+    // Remove block update listener
+    if (this._blockUpdateHandler) {
+      this.bot.removeListener('blockUpdate', this._blockUpdateHandler);
+      this._blockUpdateHandler = null;
+    }
+    
+    // Clear cache
+    this.cache.clear();
+    
+    if (this.logger) {
+      this.logger.info('[PathCache] Disposed');
+    }
   }
 
   /**
@@ -235,7 +257,7 @@ export default class PathCache {
    */
   _setupBlockListeners() {
     // Listen for block updates
-    this.bot.on('blockUpdate', (oldBlock, newBlock) => {
+    this._blockUpdateHandler = (oldBlock, newBlock) => {
       if (oldBlock && newBlock) {
         // Only invalidate if block changed between solid/non-solid
         const oldSolid = oldBlock.boundingBox === 'block';
@@ -245,7 +267,8 @@ export default class PathCache {
           this.invalidatePathsNear(newBlock.position, 3);
         }
       }
-    });
+    };
+    this.bot.on('blockUpdate', this._blockUpdateHandler);
   }
 
   /**

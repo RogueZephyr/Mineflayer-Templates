@@ -1,34 +1,57 @@
 // src/utils/WhitelistManager.js
-import fs from 'fs';
+import fs from 'fs'; // retained for existsSync fallback (rare)
+import fsp from 'fs/promises';
 import path from 'path';
 
 export default class WhitelistManager {
   constructor(masterPlayer) {
     this.masterPlayer = masterPlayer;
     this.whitelistPath = path.join(process.cwd(), 'data', 'whitelist.json');
-    this.whitelist = this.loadWhitelist();
+    this.whitelist = {}; // will be populated asynchronously
+    this._loaded = false;
+    this._loadingPromise = null;
   }
 
   /**
    * Load whitelist from disk
    */
-  loadWhitelist() {
-    try {
-      if (fs.existsSync(this.whitelistPath)) {
-        const data = JSON.parse(fs.readFileSync(this.whitelistPath, 'utf8'));
-        return data.players || {};
+  async loadWhitelist() {
+    if (this._loaded) return this.whitelist;
+    if (this._loadingPromise) return this._loadingPromise;
+    this._loadingPromise = (async () => {
+      try {
+        // Prefer async read; fall back if file missing
+        const raw = await fsp.readFile(this.whitelistPath, 'utf8').catch(() => null);
+        if (raw) {
+          const data = JSON.parse(raw);
+          this.whitelist = data.players || {};
+        } else {
+          if (fs.existsSync(this.whitelistPath)) { // rare race: exists but read failed
+            const data = JSON.parse(fs.readFileSync(this.whitelistPath, 'utf8'));
+            this.whitelist = data.players || {};
+          } else {
+            this.whitelist = {};
+          }
+        }
+      } catch (e) {
+        console.warn('[Whitelist] Failed to load whitelist.json asynchronously:', e.message);
+        this.whitelist = {};
+      } finally {
+        this._loaded = true;
       }
-    } catch (e) {
-      console.warn('[Whitelist] Failed to load whitelist.json:', e.message);
-    }
-    return {};
+      return this.whitelist;
+    })();
+    return this._loadingPromise;
   }
 
   /**
    * Reload whitelist from disk
    */
-  reload() {
-    this.whitelist = this.loadWhitelist();
+  async reload() {
+    this._loaded = false;
+    this.whitelist = {};
+    this._loadingPromise = null;
+    await this.loadWhitelist();
     return Object.keys(this.whitelist).length;
   }
 

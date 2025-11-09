@@ -2,6 +2,22 @@ import fs from 'fs/promises';
 import path from 'path';
 import Ajv from 'ajv';
 
+// Hoist Ajv instance and validator to module scope for reuse
+const ajv = new Ajv();
+const configSchema = {
+  type: 'object',
+  required: ['host', 'port', 'version', 'master'],
+  properties: {
+    host: { type: 'string' },
+    port: { type: 'number', minimum: 1, maximum: 65535 },
+    version: { type: 'string' },
+    master: { type: 'string' },
+    auth: { type: 'string', enum: ['microsoft', 'offline'] },
+    behaviors: { type: 'object' }
+  }
+};
+const validateConfig = ajv.compile(configSchema);
+
 class ConfigLoader {
   static async loadConfig(filePath = './src/config/config.json', serverOverride = null) {
     const absolutePath = path.resolve(filePath);
@@ -16,31 +32,30 @@ class ConfigLoader {
         if (serverOverride.version) config.version = serverOverride.version;
       }
 
-      // Validate structure
-      const ajv = new Ajv();
-      const validate = ajv.compile({
-        type: 'object',
-        required: ['host', 'port', 'version', 'master'],
-        properties: {
-          host: { type: 'string' },
-          port: { type: 'number', minimum: 1, maximum: 65535 },
-          version: { type: 'string' },
-          master: { type: 'string' },
-          auth: { type: 'string', enum: ['microsoft', 'offline'] },
-          behaviors: { type: 'object' }
-        }
-      });
-
-      if (!validate(config)) {
-        const errors = validate.errors.map(e => `${e.instancePath} ${e.message}`).join(', ');
-        throw new Error(`Invalid configuration structure: ${errors}`);
+      // Validate structure using cached validator
+      if (!validateConfig(config)) {
+        const errors = validateConfig.errors.map(e => `${e.instancePath} ${e.message}`).join(', ');
+        // Return structured error object instead of exiting
+        return {
+          success: false,
+          error: `Invalid configuration structure: ${errors}`,
+          errors: validateConfig.errors
+        };
       }
 
       console.log(`[CONFIG] Loaded successfully from ${absolutePath}${serverOverride ? ' (override applied)' : ''}`);
-      return config;
+      return {
+        success: true,
+        config
+      };
     } catch (err) {
       console.error(`[CONFIG] Error loading config: ${err.message}`);
-      process.exit(1);
+      // Return structured error instead of exiting
+      return {
+        success: false,
+        error: err.message,
+        exception: err
+      };
     }
   }
 }

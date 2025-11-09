@@ -1,5 +1,7 @@
 // src/utils/ProxyManager.js
-import fs from 'fs';
+import fs from 'fs'; // kept for existsSync fallback
+import fsp from 'fs/promises';
+import MetricsAdapter from './MetricsAdapter.js';
 import path from 'path';
 
 /**
@@ -18,32 +20,40 @@ export default class ProxyManager {
     this.socksModule = null;
     this.instanceId = instanceId !== null ? instanceId : ProxyManager.instanceCount++;
     this.assignedProxy = null;
-    
-    // Load proxy pool on first instantiation
-    if (!ProxyManager.proxyPool) {
-      ProxyManager._loadProxyPool(logger);
-    }
+    this.metrics = new MetricsAdapter(logger);
+    // Pool is loaded via explicit async call before instantiation in BotController
   }
 
   /**
    * Load proxy pool from proxies.json
    */
-  static _loadProxyPool(logger) {
-    try {
+  static _loadingPromise = null;
+  static async loadProxyPool(logger) {
+    if (ProxyManager.proxyPool) return ProxyManager.proxyPool;
+    if (ProxyManager._loadingPromise) return ProxyManager._loadingPromise;
+    ProxyManager._loadingPromise = (async () => {
       const proxyFile = path.join(process.cwd(), 'data', 'proxies.json');
-      if (fs.existsSync(proxyFile)) {
-        const data = JSON.parse(fs.readFileSync(proxyFile, 'utf8'));
-        ProxyManager.proxyPool = data;
-        const enabledCount = data.proxies?.filter(p => p.enabled !== false).length || 0;
+      try {
+        const raw = await fsp.readFile(proxyFile, 'utf8').catch(() => null);
+        if (raw) {
+          ProxyManager.proxyPool = JSON.parse(raw);
+        } else {
+          if (fs.existsSync(proxyFile)) {
+            ProxyManager.proxyPool = JSON.parse(fs.readFileSync(proxyFile, 'utf8'));
+          } else {
+            ProxyManager.proxyPool = { proxies: [], rotation: { enabled: false } };
+            logger?.warn?.('[ProxyManager] No proxies.json found, rotation disabled');
+          }
+        }
+        const enabledCount = ProxyManager.proxyPool.proxies?.filter(p => p.enabled !== false).length || 0;
         logger?.info?.(`[ProxyManager] Loaded proxy pool: ${enabledCount} enabled proxies`);
-      } else {
+      } catch (e) {
+        logger?.error?.(`[ProxyManager] Failed to load proxy pool: ${e.message}`);
         ProxyManager.proxyPool = { proxies: [], rotation: { enabled: false } };
-        logger?.warn?.('[ProxyManager] No proxies.json found, rotation disabled');
       }
-    } catch (e) {
-      logger?.error?.(`[ProxyManager] Failed to load proxy pool: ${e.message}`);
-      ProxyManager.proxyPool = { proxies: [], rotation: { enabled: false } };
-    }
+      return ProxyManager.proxyPool;
+    })();
+    return ProxyManager._loadingPromise;
   }
 
   /**
@@ -125,7 +135,7 @@ export default class ProxyManager {
       const socks = await import('socks');
       this.socksModule = socks;
       return socks;
-    } catch (err) {
+  } catch (_err) {
       this.logger.error('[Proxy] Failed to load socks module');
       this.logger.error('[Proxy] Install with: npm install socks');
       throw new Error('Socks module not installed. Run: npm install socks');
@@ -186,16 +196,19 @@ export default class ProxyManager {
       }
 
       const label = proxyConfig.label || `${proxyConfig.host}:${proxyConfig.port}`;
-      this.logger.info(`[Proxy] Bot #${this.instanceId} connecting via ${label} (SOCKS${proxyConfig.type || 5})`);
+  this.logger.info(`[Proxy] Bot #${this.instanceId} connecting via ${label} (SOCKS${proxyConfig.type || 5})`);
+  this.metrics.inc('proxy_connect_attempts');
 
       SocksClient.createConnection(options)
         .then(info => {
           client.setSocket(info.socket);
           client.emit('connect');
           this.logger.success(`[Proxy] Bot #${this.instanceId} connection established via ${label}`);
+          this.metrics.inc('proxy_connect_success');
         })
         .catch(err => {
           this.logger.error(`[Proxy] Bot #${this.instanceId} connection failed via ${label}: ${err.message}`);
+          this.metrics.inc('proxy_connect_fail');
           client.emit('error', err);
         });
     };
@@ -255,14 +268,19 @@ export default class ProxyManager {
         options.proxy.password = proxyConfig.password;
       }
 
+      const stop = this.metrics.startTimer('proxy_test_connection');
       const info = await SocksClient.createConnection(options);
       info.socket.destroy();
+      const dur = stop();
       
       const label = proxyConfig.label || `${proxyConfig.host}:${proxyConfig.port}`;
       this.logger.success(`[Proxy] Test connection successful to ${targetHost}:${targetPort} via ${label}`);
+      this.metrics.inc('proxy_test_success');
+      this.metrics.setGauge('proxy_test_last_ms', dur);
       return true;
     } catch (err) {
       this.logger.error(`[Proxy] Test connection failed: ${err.message}`);
+      this.metrics.inc('proxy_test_fail');
       return false;
     }
   }
@@ -339,12 +357,14 @@ export default class ProxyManager {
 
     try {
       const controller = { timedOut: false };
+      const stop = this.metrics.startTimer('proxy_ip_fetch');
       const timer = setTimeout(() => { controller.timedOut = true; }, timeoutMs);
       const info = await SocksClient.createConnection(options);
       clearTimeout(timer);
       if (controller.timedOut) {
         this.logger.warn(`[Proxy] Bot #${this.instanceId} external IP check timed out`);
         info.socket.destroy();
+        this.metrics.inc('proxy_ip_fetch_timeout');
         return null;
       }
       const socket = info.socket;
@@ -356,6 +376,7 @@ export default class ProxyManager {
         socket.on('error', err => {
           this.logger.warn(`[Proxy] Bot #${this.instanceId} external IP fetch error: ${err.message}`);
           try { socket.destroy(); } catch (_) {}
+          this.metrics.inc('proxy_ip_fetch_error');
           resolve(null);
         });
         socket.on('end', () => {
@@ -368,15 +389,20 @@ export default class ProxyManager {
             const ip = ipMatch[0];
             const label = proxyConfig.label || `${proxyConfig.host}:${proxyConfig.port}`;
             this.logger.info(`[Proxy] Bot #${this.instanceId} external IP via ${label}: ${ip}`);
+            const dur = stop();
+            this.metrics.setGauge('proxy_ip_fetch_last_ms', dur);
+            this.metrics.inc('proxy_ip_fetch_success');
             resolve(ip);
           } else {
             this.logger.warn(`[Proxy] Bot #${this.instanceId} could not parse external IP response`);
+            this.metrics.inc('proxy_ip_parse_fail');
             resolve(null);
           }
         });
       });
     } catch (e) {
       this.logger.error(`[Proxy] Bot #${this.instanceId} failed to fetch external IP: ${e.message || e}`);
+      this.metrics.inc('proxy_ip_fetch_fail');
       return null;
     }
   }

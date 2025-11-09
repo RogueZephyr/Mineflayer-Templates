@@ -17,7 +17,7 @@ export default class DepositBehavior {
       const file = path.join(process.cwd(), 'src', 'config', 'itemCategories.json');
       const raw = await fs.readFile(file, 'utf8');
       this.itemCategories = JSON.parse(raw);
-    } catch (err) {
+  } catch (_err) {
       this.logger && this.logger.warn && this.logger.warn('[Deposit] Failed to load itemCategories.json, falling back to empty mapping.');
       this.itemCategories = {};
     }
@@ -104,7 +104,7 @@ export default class DepositBehavior {
     }
 
     // Fallback: Legacy pathfinding
-    const target = new Vec3(Math.floor(pos.x) + 0.5, Math.floor(pos.y), Math.floor(pos.z) + 0.5);
+  const _target = new Vec3(Math.floor(pos.x) + 0.5, Math.floor(pos.y), Math.floor(pos.z) + 0.5);
     
     if (this.bot.pathfinder && typeof this.bot.pathfinder.goto === 'function') {
       try {

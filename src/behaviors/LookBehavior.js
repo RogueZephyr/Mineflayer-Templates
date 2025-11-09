@@ -1,7 +1,7 @@
 // src/behaviors/LookBehavior.js
 import Logger from '../utils/logger.js';
 import chalk from 'chalk';
-import { Vec3 } from 'vec3';
+// Removed unused Vec3 import
 
 const logger = new Logger();
 const lookLabel = chalk.green('[LookBehavior]');
@@ -63,15 +63,15 @@ export default class LookBehavior {
   onEntitySpawn(entity) {
     if (!this.enabled) return;
     // Optionally log new entities
-    const name = entity.username ?? entity.displayName ?? entity.type ?? '<unknown>';
+  const _name = entity.username ?? entity.displayName ?? entity.type ?? '<unknown>';
     //logger.info(`${lookLabel} Entity spawned: ${name}`);
   }
 
   onEntityGone(entity) {
     if (!this.enabled) return;
     if (this.currentTarget && entity.id === this.currentTarget.id) {
-      const name = entity.username ?? entity.displayName ?? entity.type ?? '<unknown>';
-      logger.info(`${lookLabel} ${name} left view range.`);
+  const _name = entity.username ?? entity.displayName ?? entity.type ?? '<unknown>';
+  logger.info(`${lookLabel} ${_name} left view range.`);
       this.currentTarget = null;
     }
   }
@@ -92,16 +92,16 @@ export default class LookBehavior {
 
   _shouldGreetBot(username) {
     const now = Date.now();
-    const lastSeen = this.botLastSeen.get(username);
+    const _lastSeen = this.botLastSeen.get(username);
     
-    if (!lastSeen) {
+    if (!_lastSeen) {
       // First time seeing this bot - greet for 2 seconds
       this.botLastSeen.set(username, now);
       return true;
     }
     
     // Check if still within greet duration
-    return (now - lastSeen) < this.botGreetDuration;
+    return (now - _lastSeen) < this.botGreetDuration;
   }
 
   updateLookTarget() {
@@ -109,7 +109,7 @@ export default class LookBehavior {
 
     const botPos = this.bot.entity.position;
     const maxDist = this.config.maxDistance || 8;
-    const now = Date.now();
+    const _now = Date.now();
 
     // Get all nearby players
     const nearbyPlayers = Object.values(this.bot.players)

@@ -275,7 +275,7 @@ export default class MiningBehavior {
       const items = this.bot.inventory.items();
       const totalItems = items.reduce((sum, item) => sum + (item.count || 0), 0);
       return totalItems >= this.settings.depositThreshold;
-    } catch (e) {
+  } catch (_e) {
       return false;
     }
   }
@@ -336,12 +336,38 @@ export default class MiningBehavior {
 
   /**
    * Deposit mined materials to chest
-   * Tries multiple chests if the first one is full
+   * Uses centralized DepositUtil for consistency
    * TODO: Implement courier handoff system
    */
   async _depositMaterials() {
     try {
       this._emitDebug('Depositing materials...');
+      
+      if (!this.bot.depositUtil) {
+        this._emitDebug('DepositUtil not available - using fallback');
+        return await this._depositMaterialsFallback();
+      }
+
+      // Use centralized deposit utility
+      const result = await this.bot.depositUtil.depositToNearest('ores', 20);
+      
+      if (result.success) {
+        this._emitDebug(`Deposited ${result.depositedCount} items successfully`);
+      } else {
+        this._emitDebug(`Deposit failed: ${result.error || 'unknown error'}`);
+      }
+      
+    } catch (err) {
+      this._emitDebug(`Deposit error: ${err.message || err}`);
+    }
+  }
+
+  /**
+   * Fallback deposit method (legacy)
+   */
+  async _depositMaterialsFallback() {
+    try {
+      this._emitDebug('Using fallback deposit method...');
       
       const depositPos = await this._findDepositChest();
       if (!depositPos) {
@@ -473,7 +499,7 @@ export default class MiningBehavior {
         // Everything else: deposit all
         await chest.deposit(item.type, null, item.count).catch(e => this._emitDebug(`Deposit fail (${item.name}): ${e.message}`));
         this._emitDebug(`Deposited ${item.count} ${item.name}`);
-      } catch (e) {
+  } catch (_e) {
         // Continue on individual failures
       }
     }
@@ -1631,6 +1657,8 @@ export default class MiningBehavior {
       this._emitDebug(`Cannot start quarry - already in ${this.currentMode} mode`);
       return;
     }
+    // Track whether item collector was running prior to quarry
+    let itemCollectorWasRunning = false;
 
     try {
       // Enable mining state
@@ -1656,10 +1684,9 @@ export default class MiningBehavior {
       // The bot needs to freely dig and navigate within the quarry area
       // Conservative pathfinding would prevent proper navigation during excavation
 
-      // Execute quarry layer by layer
-      let lastLayer = -1;
-      let processedCount = 0;
-      let itemCollectorWasRunning = false;
+  // Execute quarry layer by layer
+  let lastLayer = -1;
+  let processedCount = 0;
       
       // Disable item collection during quarry to prevent interruptions
       if (this.bot.itemCollector && this.bot.itemCollector.isRunning) {

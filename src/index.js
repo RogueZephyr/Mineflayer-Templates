@@ -1,6 +1,7 @@
 import ConfigLoader from './core/ConfigLoader.js';
 import BotController from './core/BotController.js';
 import BotCoordinator from './core/BotCoordinator.js';
+import MetricsAdapter from './utils/MetricsAdapter.js';
 import readline from 'readline';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
@@ -85,10 +86,20 @@ if (argv.server) {
   console.log(`[Server] Selected: ${entry.alias} -> ${entry.host}:${entry.port} (${entry.version})`);
 }
 
-const config = await ConfigLoader.loadConfig('./src/config/config.json', serverOverride);
+const configResult = await ConfigLoader.loadConfig('./src/config/config.json', serverOverride);
+
+// Handle config loading errors
+if (!configResult.success) {
+  console.error(`[CONFIG] Failed to load configuration: ${configResult.error}`);
+  process.exit(1);
+}
+
+const config = configResult.config;
 
 // Create shared coordinator for multi-bot synchronization
-const sharedCoordinator = new BotCoordinator();
+// Global metrics adapter (can be expanded later or exported)
+const globalMetrics = new MetricsAdapter();
+const sharedCoordinator = new BotCoordinator({ metrics: globalMetrics });
 
 // Clean up expired claims every 30 seconds
 setInterval(() => {
@@ -136,7 +147,9 @@ async function spawnBots(count) {
     console.log(`Starting bot ${i + 1}/${count}...`);
     
     try {
-      const botController = new BotController(config, null, sharedCoordinator, i);
+  const botController = new BotController(config, null, sharedCoordinator, i);
+  // Expose global metrics to each bot for ad-hoc instrumentation
+  botController.metrics = globalMetrics;
       await botController.start(); // Wait for successful login
       // Update server cache lastUsed
       try {

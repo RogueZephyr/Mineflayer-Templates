@@ -337,7 +337,7 @@ export default class InventoryBehavior {
 
 
     // Pickup item from the ground (simplified)
-    async pickupItem(itemName, maxDistance = 5) {
+    async pickupItem(itemName, _maxDistance = 5) {
         if (!this.enabled) return false;
 
         const target = Object.values(this.bot.entities)

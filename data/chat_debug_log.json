@@ -561,5 +561,1193 @@
       }
     },
     "timestamp": "2025-11-08T08:27:57.597Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:50:28.502Z",
+      "botUsername": "Beatrix917",
+      "displayText": "You're protected from attack by other players as long as your inventory is empty.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:50:28.503Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:50:58.250Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Prevent grief!  If you claim your land, you will be grief-proof.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:50:58.250Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:50:58.251Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Click for Land Claim Help: bit.ly/mcgpuser",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:50:58.251Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:51:28.258Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Now you can fight with other players.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:51:28.258Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:52:26.260Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] To teleport to your death location use /back",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:52:26.260Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T08:52:26.262Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "To teleport to your death location use /back"
+    },
+    "timestamp": "2025-11-08T08:52:26.262Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:52:26.263Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] Your death location is: X:-46514 Y:96 Z:-52518!",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:52:26.263Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T08:52:26.264Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "Your death location is: X:-46514 Y:96 Z:-52518!"
+    },
+    "timestamp": "2025-11-08T08:52:26.264Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:52:26.266Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Beatrix917 was shot by Skeleton",
+      "position": "system",
+      "rawJsonSample": {
+        "translate": "death.attack.arrow",
+        "hasWith": true,
+        "translateKey": "death.attack.arrow"
+      }
+    },
+    "timestamp": "2025-11-08T08:52:26.266Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:52:26.829Z",
+      "botUsername": "Beatrix917",
+      "displayText": "You're protected from attack by other players as long as your inventory is empty.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:52:26.829Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:52:36.690Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Now you can fight with other players.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:52:36.690Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:53:40.064Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Sleeping through this night",
+      "position": "game_info",
+      "rawJsonSample": {
+        "translate": "sleep.skipping_night",
+        "translateKey": "sleep.skipping_night"
+      }
+    },
+    "timestamp": "2025-11-08T08:53:40.064Z"
+  },
+  {
+    "eventType": "actionBar",
+    "data": {
+      "timestamp": "2025-11-08T08:53:40.065Z",
+      "botUsername": "Beatrix917",
+      "text": "Sleeping through this night",
+      "rawJsonSample": {
+        "translate": "sleep.skipping_night",
+        "translateKey": "sleep.skipping_night"
+      }
+    },
+    "timestamp": "2025-11-08T08:53:40.065Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:57:11.348Z",
+      "botUsername": "Beatrix917",
+      "displayText": "You're protected from attack by other players as long as your inventory is empty.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:57:11.348Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:57:21.028Z",
+      "botUsername": "Beatrix917",
+      "displayText": "You do not have access to that command.",
+      "position": "system",
+      "rawJsonSample": {
+        "mainText": "You do not have access to that command.",
+        "color": "dark_red",
+        "text": "You do not have access to that command."
+      }
+    },
+    "timestamp": "2025-11-08T08:57:21.029Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:57:43.031Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] Sending a teleport request to RogueZ3phyr. If you want to cancel it /tpcancel player ",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:57:43.031Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T08:57:43.033Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "Sending a teleport request to RogueZ3phyr. If you want to cancel it /tpcancel player "
+    },
+    "timestamp": "2025-11-08T08:57:43.033Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:57:48.206Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] You will be teleported in 5 seconds!",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:57:48.206Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T08:57:48.207Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "You will be teleported in 5 seconds!"
+    },
+    "timestamp": "2025-11-08T08:57:48.207Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:57:48.208Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] RogueZ3phyr has accepted your teleportation request.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:57:48.208Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T08:57:48.209Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "RogueZ3phyr has accepted your teleportation request."
+    },
+    "timestamp": "2025-11-08T08:57:48.209Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:57:53.151Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] Teleported!",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T08:57:53.151Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T08:57:53.152Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "Teleported!"
+    },
+    "timestamp": "2025-11-08T08:57:53.152Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:58:47.321Z",
+      "botUsername": "Beatrix917",
+      "displayText": "!ping",
+      "position": "chat",
+      "extractedUsername": "RogueZ3phyr",
+      "extractedMessage": "!ping"
+    },
+    "timestamp": "2025-11-08T08:58:47.321Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:59:02.348Z",
+      "botUsername": "Beatrix917",
+      "displayText": "RogueZ3phyr whispers to you: ping",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "%s whispers to you: %s",
+        "hasWith": true,
+        "translateKey": "%s whispers to you: %s"
+      }
+    },
+    "timestamp": "2025-11-08T08:59:02.348Z"
+  },
+  {
+    "eventType": "whisper",
+    "data": {
+      "timestamp": "2025-11-08T08:59:02.349Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "ping"
+    },
+    "timestamp": "2025-11-08T08:59:02.349Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T08:59:02.715Z",
+      "botUsername": "Beatrix917",
+      "displayText": "You do not have access to that command.",
+      "position": "system",
+      "rawJsonSample": {
+        "mainText": "You do not have access to that command.",
+        "color": "dark_red",
+        "text": "You do not have access to that command."
+      }
+    },
+    "timestamp": "2025-11-08T08:59:02.715Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:05:20.836Z",
+      "botUsername": "Beatrix917",
+      "displayText": "!setarea farm start",
+      "position": "chat",
+      "extractedUsername": "RogueZ3phyr",
+      "extractedMessage": "!setarea farm start"
+    },
+    "timestamp": "2025-11-08T09:05:20.836Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:05:32.871Z",
+      "botUsername": "Beatrix917",
+      "displayText": "!setarea farm end",
+      "position": "chat",
+      "extractedUsername": "RogueZ3phyr",
+      "extractedMessage": "!setarea farm end"
+    },
+    "timestamp": "2025-11-08T09:05:32.871Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:09:18.979Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] Sending a teleport request to RogueZ3phyr. If you want to cancel it /tpcancel player ",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T09:09:18.979Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T09:09:18.981Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "Sending a teleport request to RogueZ3phyr. If you want to cancel it /tpcancel player "
+    },
+    "timestamp": "2025-11-08T09:09:18.981Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:09:21.284Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] You will be teleported in 5 seconds!",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T09:09:21.284Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T09:09:21.285Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "You will be teleported in 5 seconds!"
+    },
+    "timestamp": "2025-11-08T09:09:21.285Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:09:21.286Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] RogueZ3phyr has accepted your teleportation request.",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T09:09:21.286Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T09:09:21.287Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "RogueZ3phyr has accepted your teleportation request."
+    },
+    "timestamp": "2025-11-08T09:09:21.287Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:09:26.206Z",
+      "botUsername": "Beatrix917",
+      "displayText": "[SimpleTpa] Teleported!",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T09:09:26.206Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T09:09:26.207Z",
+      "botUsername": "Beatrix917",
+      "username": "SimpleTpa",
+      "message": "Teleported!"
+    },
+    "timestamp": "2025-11-08T09:09:26.207Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:09:49.768Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Beatrix917 has made the advancement [A Seedy Place]",
+      "position": "system",
+      "rawJsonSample": {
+        "translate": "chat.type.advancement.task",
+        "hasWith": true,
+        "translateKey": "chat.type.advancement.task"
+      }
+    },
+    "timestamp": "2025-11-08T09:09:49.768Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:09:49.769Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Other players can build here, too.  Consider creating a land claim to protect your work!",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T09:09:49.769Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:09:49.770Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Click for Land Claim Help: bit.ly/mcgpuser",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T09:09:49.770Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:12:09.422Z",
+      "botUsername": "Beatrix917",
+      "displayText": "I'm hungry, but I have no allowed food!",
+      "position": "chat",
+      "extractedUsername": "Beatrix917",
+      "extractedMessage": "I'm hungry, but I have no allowed food!"
+    },
+    "timestamp": "2025-11-08T09:12:09.422Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:12:39.541Z",
+      "botUsername": "Beatrix917",
+      "displayText": "I'm hungry, but I have no allowed food!",
+      "position": "chat",
+      "extractedUsername": "Beatrix917",
+      "extractedMessage": "I'm hungry, but I have no allowed food!"
+    },
+    "timestamp": "2025-11-08T09:12:39.541Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T09:13:16.567Z",
+      "botUsername": "Beatrix917",
+      "displayText": "I'm hungry, but I have no allowed food!",
+      "position": "chat",
+      "extractedUsername": "Beatrix917",
+      "extractedMessage": "I'm hungry, but I have no allowed food!"
+    },
+    "timestamp": "2025-11-08T09:13:16.567Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:38:20.530Z",
+      "botUsername": "Beatrix917",
+      "displayText": "RogueZ3phyr teleported you to RogueZ3phyr.",
+      "position": "system",
+      "rawJsonSample": {
+        "color": "red",
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T20:38:20.530Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:38:20.543Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Teleporting...",
+      "position": "system",
+      "rawJsonSample": {
+        "mainText": "Teleporting...",
+        "color": "gold",
+        "text": "Teleporting..."
+      }
+    },
+    "timestamp": "2025-11-08T20:38:20.543Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:38:48.444Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !wood start",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:38:48.444Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:38:48.446Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!wood start"
+    },
+    "timestamp": "2025-11-08T20:38:48.446Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:38:48.935Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> No woodcutting area set - will search for nearest trees",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:38:48.935Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:38:48.936Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "No woodcutting area set - will search for nearest trees"
+    },
+    "timestamp": "2025-11-08T20:38:48.936Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:40:51.017Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !wood start",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:40:51.017Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:40:51.019Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!wood start"
+    },
+    "timestamp": "2025-11-08T20:40:51.019Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:40:51.428Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> No woodcutting area set - will search for nearest trees",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:40:51.428Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:40:51.429Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "No woodcutting area set - will search for nearest trees"
+    },
+    "timestamp": "2025-11-08T20:40:51.429Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:40:51.886Z",
+      "botUsername": "Beatrix917",
+      "displayText": "Sorry, but you have to move a little more before you can chat.  We get lots of spam bots here.  :)",
+      "position": "system",
+      "rawJsonSample": {
+        "hasExtra": true
+      }
+    },
+    "timestamp": "2025-11-08T20:40:51.886Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:41:24.686Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !come",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:41:24.686Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:41:24.687Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!come"
+    },
+    "timestamp": "2025-11-08T20:41:24.687Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:41:26.065Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> Coming to RogueZ3phyr",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:41:26.065Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:41:26.067Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "Coming to RogueZ3phyr"
+    },
+    "timestamp": "2025-11-08T20:41:26.067Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:41:27.970Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !wood start",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:41:27.970Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:41:27.971Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!wood start"
+    },
+    "timestamp": "2025-11-08T20:41:27.971Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:41:28.343Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> No woodcutting area set - will search for nearest trees",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:41:28.343Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:41:28.344Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "No woodcutting area set - will search for nearest trees"
+    },
+    "timestamp": "2025-11-08T20:41:28.344Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:43:09.794Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !come",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:43:09.794Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:43:09.796Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!come"
+    },
+    "timestamp": "2025-11-08T20:43:09.796Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:43:12.533Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> Coming to RogueZ3phyr",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:43:12.533Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:43:12.534Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "Coming to RogueZ3phyr"
+    },
+    "timestamp": "2025-11-08T20:43:12.534Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:43:13.237Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !wood start",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:43:13.237Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:43:13.238Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!wood start"
+    },
+    "timestamp": "2025-11-08T20:43:13.238Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:43:14.291Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> No woodcutting area set - will search for nearest trees",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:43:14.291Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:43:14.292Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "No woodcutting area set - will search for nearest trees"
+    },
+    "timestamp": "2025-11-08T20:43:14.292Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:44:02.735Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !chatDebug disble",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:44:02.735Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:44:02.737Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!chatDebug disble"
+    },
+    "timestamp": "2025-11-08T20:44:02.737Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:44:03.339Z",
+      "botUsername": "Beatrix917",
+      "displayText": "You do not have access to that command.",
+      "position": "system",
+      "rawJsonSample": {
+        "mainText": "You do not have access to that command.",
+        "color": "dark_red",
+        "text": "You do not have access to that command."
+      }
+    },
+    "timestamp": "2025-11-08T20:44:03.339Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:44:32.393Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !chatDebug stop",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:44:32.393Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:44:32.394Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!chatDebug stop"
+    },
+    "timestamp": "2025-11-08T20:44:32.394Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:56:06.230Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !wood start",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:56:06.230Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:56:06.231Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!wood start"
+    },
+    "timestamp": "2025-11-08T20:56:06.231Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:56:06.602Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> No woodcutting area set - will search for nearest trees",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:56:06.602Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:56:06.603Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "No woodcutting area set - will search for nearest trees"
+    },
+    "timestamp": "2025-11-08T20:56:06.603Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:57:40.435Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !wood stop",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:57:40.436Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:57:40.437Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!wood stop"
+    },
+    "timestamp": "2025-11-08T20:57:40.437Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:57:41.031Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> Stopped woodcutting",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:57:41.031Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:57:41.033Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "Stopped woodcutting"
+    },
+    "timestamp": "2025-11-08T20:57:41.033Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:57:46.949Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !come",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:57:46.949Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:57:46.950Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!come"
+    },
+    "timestamp": "2025-11-08T20:57:46.950Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:57:48.653Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> Failed to come: The goal was changed before it could be completed!",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:57:48.653Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:57:48.654Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "Failed to come: The goal was changed before it could be completed!"
+    },
+    "timestamp": "2025-11-08T20:57:48.654Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:57:55.747Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !come",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:57:55.747Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:57:55.749Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!come"
+    },
+    "timestamp": "2025-11-08T20:57:55.749Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T20:57:58.140Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> Failed to come: No path to the goal!",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T20:57:58.140Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T20:57:58.141Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "Failed to come: No path to the goal!"
+    },
+    "timestamp": "2025-11-08T20:57:58.141Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T21:00:42.359Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<RogueZ3phyr> !come",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T21:00:42.359Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T21:00:42.360Z",
+      "botUsername": "Beatrix917",
+      "username": "RogueZ3phyr",
+      "message": "!come"
+    },
+    "timestamp": "2025-11-08T21:00:42.360Z"
+  },
+  {
+    "eventType": "message",
+    "data": {
+      "timestamp": "2025-11-08T21:00:44.656Z",
+      "botUsername": "Beatrix917",
+      "displayText": "<Beatrix917> Failed to come: No path to the goal!",
+      "position": "chat",
+      "rawJsonSample": {
+        "translate": "<%s> %s",
+        "hasWith": true,
+        "translateKey": "<%s> %s"
+      }
+    },
+    "timestamp": "2025-11-08T21:00:44.656Z"
+  },
+  {
+    "eventType": "chat",
+    "data": {
+      "timestamp": "2025-11-08T21:00:44.657Z",
+      "botUsername": "Beatrix917",
+      "username": "Beatrix917",
+      "message": "Failed to come: No path to the goal!"
+    },
+    "timestamp": "2025-11-08T21:00:44.657Z"
   }
 ]

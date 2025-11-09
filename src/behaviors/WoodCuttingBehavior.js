@@ -1,5 +1,7 @@
 // src/behaviors/WoodCuttingBehavior.js
 import { Vec3 } from 'vec3';
+import pathfinderPkg from 'mineflayer-pathfinder';
+const { goals } = pathfinderPkg;
 
 export default class WoodCuttingBehavior {
   constructor(bot, logger, master) {
@@ -117,9 +119,9 @@ export default class WoodCuttingBehavior {
         const goal = new goals.GoalNear(targetPos.x, targetPos.y, targetPos.z, 1.5);
         await this.bot.pathfinder.goto(goal);
         return;
-      } catch (e) {
-        this._emitDebug('pathfinder.goto failed:', e.message || e);
-        throw e;
+      } catch (_e) {
+        this._emitDebug('pathfinder.goto failed:', _e.message || _e);
+        throw _e;
       }
     }
 
@@ -197,7 +199,7 @@ export default class WoodCuttingBehavior {
     }
 
     try {
-      await this._goto(chestPos, 15000, 'tool_chest');
+        await this._goto(chestPos, 15000, 'tool_chest');
       
       const chestBlock = this.bot.blockAt(chestPos);
       if (!chestBlock || chestBlock.name !== 'chest') {
@@ -221,8 +223,8 @@ export default class WoodCuttingBehavior {
       chest.close();
       this._emitDebug('No axes found in tool chest');
       return false;
-    } catch (e) {
-      this._emitDebug('Failed to get axe from chest:', e.message);
+    } catch (_e) {
+        this._emitDebug('Failed to get axe from chest:', _e.message);
       return false;
     }
   }
@@ -509,7 +511,7 @@ export default class WoodCuttingBehavior {
     let currentY = baseY;
     
     // Track placed scaffolding blocks for cleanup
-    const placedScaffold = [];
+  const _placedScaffold = [];
 
     // Helper: break any reachable remaining trunk logs from current position
     const breakReachableLogs = async () => {
@@ -531,7 +533,7 @@ export default class WoodCuttingBehavior {
             harvestedCount++;
             brokeAny = true;
             await new Promise(r => setTimeout(r, this.settings.logBreakDelayMs));
-          } catch (e) {
+          } catch (_e) {
             // ignore per-block failures
           }
         }
@@ -605,8 +607,8 @@ export default class WoodCuttingBehavior {
           currentY = Math.floor(this.bot.entity.position.y);
           this._emitDebug(`Climbed to Y=${currentY}`);
           return true;
-        } catch (e) {
-          this._emitDebug(`Climb attempt ${attempt + 1} failed: ${e.message}`);
+        } catch (_e) {
+          this._emitDebug(`Climb attempt ${attempt + 1} failed: ${_e?.message || _e}`);
           if (attempt === maxAttempts - 1) return false;
           await new Promise(r => setTimeout(r, 500));
         }
@@ -688,8 +690,8 @@ export default class WoodCuttingBehavior {
           break;
         }
       }
-    } catch (e) {
-      this._emitDebug('Harvest loop error:', e.message);
+    } catch (_e) {
+      this._emitDebug('Harvest loop error:', _e?.message || _e);
     }
 
     this._emitDebug(`Harvested ${harvestedCount} logs (bottom-up)`);
@@ -729,7 +731,7 @@ export default class WoodCuttingBehavior {
                         await this.bot.dig(blockNow);
                       }
                       await new Promise(r => setTimeout(r, this.settings.cleanupDigDelayMs || 80));
-                    } catch (e) {
+                    } catch (_e) {
                       // Ignore cleanup errors
                     }
                   }
@@ -739,8 +741,8 @@ export default class WoodCuttingBehavior {
           }
           this._emitDebug('Fallback cleanup complete');
         }
-      } catch (e) {
-        this._emitDebug('Scaffolding cleanup error:', e.message);
+      } catch (_e) {
+        this._emitDebug('Scaffolding cleanup error:', _e?.message || _e);
       }
     } else if (scaffoldingUtil) {
       // Still stop tracking even if cleanup is disabled
@@ -791,8 +793,8 @@ export default class WoodCuttingBehavior {
         await this.bot.placeBlock(groundBlock, new Vec3(0, 1, 0));
         this._emitDebug(`Replanted ${saplingType} at ${basePos.x}, ${basePos.y}, ${basePos.z}`);
       }
-    } catch (e) {
-      this._emitDebug('Failed to replant sapling:', e.message);
+  } catch (_e) {
+  this._emitDebug('Failed to replant sapling:', _e?.message || _e);
     }
   }
 
@@ -804,8 +806,8 @@ export default class WoodCuttingBehavior {
     
     try {
       await this.bot.itemCollector.collectOnce({ radius: radius });
-    } catch (e) {
-      this._emitDebug('Failed to collect items:', e.message);
+  } catch (_e) {
+      this._emitDebug('Failed to collect items:', _e?.message || _e);
     }
   }
 
@@ -1070,17 +1072,44 @@ export default class WoodCuttingBehavior {
       
       const totalLogs = logItems.reduce((sum, item) => sum + (item.count || 0), 0);
       return totalLogs > 128; // Deposit when we have 2+ stacks
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   }
 
   /**
    * Deposit logs to chest
+   * Uses centralized DepositUtil for consistency
    */
   async _depositLogs() {
     try {
       this._emitDebug('Depositing logs...');
+      
+      if (!this.bot.depositUtil) {
+        this._emitDebug('DepositUtil not available - using fallback');
+        return await this._depositLogsFallback();
+      }
+
+      // Use centralized deposit utility
+      const result = await this.bot.depositUtil.depositToNearest('wood', 20);
+      
+      if (result.success) {
+        this._emitDebug(`Deposited ${result.depositedCount} items successfully`);
+      } else {
+        this._emitDebug(`Deposit failed: ${result.error || 'unknown error'}`);
+      }
+      
+    } catch (err) {
+      this._emitDebug(`Deposit error: ${err.message || err}`);
+    }
+  }
+
+  /**
+   * Fallback deposit method (legacy)
+   */
+  async _depositLogsFallback() {
+    try {
+      this._emitDebug('Using fallback deposit method...');
       
       // Get log items from inventory
       const logItems = this.bot.inventory.items().filter(item => {
@@ -1133,16 +1162,16 @@ export default class WoodCuttingBehavior {
         try {
           await chest.deposit(logItem.type, null, logItem.count);
           this._emitDebug(`Deposited ${logItem.count} ${logItem.name}`);
-        } catch (e) {
-          this._emitDebug(`Failed to deposit ${logItem.name}:`, e.message);
+        } catch (_e) {
+          this._emitDebug(`Failed to deposit ${logItem.name}:`, _e?.message || _e);
         }
       }
       
       chest.close();
       this._emitDebug('Logs deposited successfully');
       
-    } catch (e) {
-      this._emitDebug('Failed to deposit logs:', e.message);
+    } catch (_e) {
+      this._emitDebug('Failed to deposit logs:', _e?.message || _e);
     }
   }
 }

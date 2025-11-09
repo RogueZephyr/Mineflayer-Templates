@@ -60,8 +60,8 @@ export default class ToolHandler {
       shears: ['shears']
     };
 
-    // Block to tool type mapping
-    this.blockToolMap = this._buildBlockToolMap();
+  // Block to tool type mapping (derived dynamically)
+  this.blockToolMap = this._buildDynamicBlockToolMap();
     
     // Tool durability thresholds
     this.minDurability = 5; // Don't use tools below this durability
@@ -69,120 +69,80 @@ export default class ToolHandler {
   }
 
   /**
-   * Build mapping of block types to optimal tool types
+   * Build dynamic mapping of block names to optimal tool types using minecraft-data.
+   * Falls back to material/name heuristics when harvestTools are not defined.
    */
-  _buildBlockToolMap() {
+  _buildDynamicBlockToolMap() {
     const map = {};
-    
-    // Pickaxe blocks (stone, ores, metals)
-    const pickaxeBlocks = [
-      'stone', 'cobblestone', 'granite', 'diorite', 'andesite', 'deepslate',
-      'coal_ore', 'iron_ore', 'gold_ore', 'diamond_ore', 'emerald_ore', 'redstone_ore', 'lapis_ore',
-      'copper_ore', 'nether_gold_ore', 'nether_quartz_ore', 'ancient_debris',
-      'deepslate_coal_ore', 'deepslate_iron_ore', 'deepslate_gold_ore', 'deepslate_diamond_ore',
-      'deepslate_emerald_ore', 'deepslate_redstone_ore', 'deepslate_lapis_ore', 'deepslate_copper_ore',
-      'iron_block', 'gold_block', 'diamond_block', 'emerald_block', 'netherite_block',
-      'anvil', 'chipped_anvil', 'damaged_anvil',
-      'furnace', 'blast_furnace', 'smoker',
-      'obsidian', 'crying_obsidian', 'respawn_anchor',
-      'netherrack', 'nether_bricks', 'red_nether_bricks',
-      'end_stone', 'end_stone_bricks',
-      'sandstone', 'red_sandstone', 'smooth_sandstone', 'smooth_red_sandstone',
-      'bricks', 'stone_bricks', 'mossy_stone_bricks', 'cracked_stone_bricks',
-      'prismarine', 'prismarine_bricks', 'dark_prismarine',
-      'terracotta', 'white_terracotta', 'orange_terracotta', 'magenta_terracotta',
-      'light_blue_terracotta', 'yellow_terracotta', 'lime_terracotta', 'pink_terracotta',
-      'gray_terracotta', 'light_gray_terracotta', 'cyan_terracotta', 'purple_terracotta',
-      'blue_terracotta', 'brown_terracotta', 'green_terracotta', 'red_terracotta', 'black_terracotta',
-      'rail', 'powered_rail', 'detector_rail', 'activator_rail',
-      'hopper', 'dispenser', 'dropper', 'observer', 'piston', 'sticky_piston',
-      'iron_door', 'iron_trapdoor', 'iron_bars',
-      'cauldron', 'brewing_stand', 'bell', 'lantern', 'soul_lantern', 'chain',
-      'basalt', 'smooth_basalt', 'polished_basalt', 'blackstone', 'gilded_blackstone',
-      'polished_blackstone', 'polished_blackstone_bricks', 'cracked_polished_blackstone_bricks'
-    ];
-    
-    // Axe blocks (wood, logs, planks)
-    const axeBlocks = [
-      'oak_log', 'spruce_log', 'birch_log', 'jungle_log', 'acacia_log', 'dark_oak_log',
-      'mangrove_log', 'cherry_log', 'crimson_stem', 'warped_stem',
-      'stripped_oak_log', 'stripped_spruce_log', 'stripped_birch_log', 'stripped_jungle_log',
-      'stripped_acacia_log', 'stripped_dark_oak_log', 'stripped_mangrove_log', 'stripped_cherry_log',
-      'stripped_crimson_stem', 'stripped_warped_stem',
-      'oak_wood', 'spruce_wood', 'birch_wood', 'jungle_wood', 'acacia_wood', 'dark_oak_wood',
-      'mangrove_wood', 'cherry_wood', 'crimson_hyphae', 'warped_hyphae',
-      'oak_planks', 'spruce_planks', 'birch_planks', 'jungle_planks', 'acacia_planks', 'dark_oak_planks',
-      'mangrove_planks', 'cherry_planks', 'crimson_planks', 'warped_planks', 'bamboo_planks',
-      'crafting_table', 'cartography_table', 'fletching_table', 'smithing_table',
-      'barrel', 'chest', 'trapped_chest', 'bookshelf', 'lectern',
-      'oak_fence', 'spruce_fence', 'birch_fence', 'jungle_fence', 'acacia_fence', 'dark_oak_fence',
-      'mangrove_fence', 'cherry_fence', 'crimson_fence', 'warped_fence', 'bamboo_fence',
-      'oak_fence_gate', 'spruce_fence_gate', 'birch_fence_gate', 'jungle_fence_gate',
-      'acacia_fence_gate', 'dark_oak_fence_gate', 'mangrove_fence_gate', 'cherry_fence_gate',
-      'crimson_fence_gate', 'warped_fence_gate', 'bamboo_fence_gate',
-      'oak_door', 'spruce_door', 'birch_door', 'jungle_door', 'acacia_door', 'dark_oak_door',
-      'mangrove_door', 'cherry_door', 'crimson_door', 'warped_door', 'bamboo_door',
-      'oak_stairs', 'spruce_stairs', 'birch_stairs', 'jungle_stairs', 'acacia_stairs', 'dark_oak_stairs',
-      'mangrove_stairs', 'cherry_stairs', 'crimson_stairs', 'warped_stairs', 'bamboo_stairs',
-      'oak_slab', 'spruce_slab', 'birch_slab', 'jungle_slab', 'acacia_slab', 'dark_oak_slab',
-      'mangrove_slab', 'cherry_slab', 'crimson_slab', 'warped_slab', 'bamboo_slab',
-      'campfire', 'soul_campfire', 'beehive', 'bee_nest',
-      'note_block', 'jukebox', 'loom', 'composter', 'daylight_detector',
-      'bamboo', 'bamboo_block', 'stripped_bamboo_block'
-    ];
-    
-    // Shovel blocks (dirt, sand, gravel, snow)
-    const shovelBlocks = [
-      'dirt', 'coarse_dirt', 'podzol', 'mycelium', 'grass_block',
-      'sand', 'red_sand', 'gravel',
-      'clay', 'snow', 'snow_block', 'powder_snow',
-      'soul_sand', 'soul_soil',
-      'farmland', 'dirt_path', 'muddy_mangrove_roots',
-      'mud', 'packed_mud', 'mud_bricks',
-      'concrete_powder', 'white_concrete_powder', 'orange_concrete_powder', 'magenta_concrete_powder',
-      'light_blue_concrete_powder', 'yellow_concrete_powder', 'lime_concrete_powder', 'pink_concrete_powder',
-      'gray_concrete_powder', 'light_gray_concrete_powder', 'cyan_concrete_powder', 'purple_concrete_powder',
-      'blue_concrete_powder', 'brown_concrete_powder', 'green_concrete_powder', 'red_concrete_powder',
-      'black_concrete_powder'
-    ];
-    
-    // Hoe blocks (leaves, hay, dried kelp, sponge, sculk, nether wart)
-    const hoeBlocks = [
-      'oak_leaves', 'spruce_leaves', 'birch_leaves', 'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves',
-      'mangrove_leaves', 'cherry_leaves', 'azalea_leaves', 'flowering_azalea_leaves',
-      'hay_block', 'dried_kelp_block', 'target',
-      'nether_wart_block', 'warped_wart_block',
-      'sponge', 'wet_sponge',
-      'moss_block', 'moss_carpet',
-      'sculk', 'sculk_vein', 'sculk_catalyst', 'sculk_shrieker', 'sculk_sensor'
-    ];
-    
-    // Shears blocks (wool, cobweb, vines)
-    const shearsBlocks = [
-      'cobweb',
-      'white_wool', 'orange_wool', 'magenta_wool', 'light_blue_wool', 'yellow_wool', 'lime_wool',
-      'pink_wool', 'gray_wool', 'light_gray_wool', 'cyan_wool', 'purple_wool', 'blue_wool',
-      'brown_wool', 'green_wool', 'red_wool', 'black_wool',
-      'vine', 'glow_lichen', 'twisting_vines', 'weeping_vines',
-      'seagrass', 'tall_seagrass', 'kelp'
-    ];
-    
-    // Sword blocks (bamboo, cobweb can also use sword)
-    const swordBlocks = [
-      'bamboo', 'cobweb'
-    ];
-    
-    // Map blocks to tool types
-    pickaxeBlocks.forEach(block => map[block] = 'pickaxe');
-    axeBlocks.forEach(block => map[block] = 'axe');
-    shovelBlocks.forEach(block => map[block] = 'shovel');
-    hoeBlocks.forEach(block => map[block] = 'hoe');
-    shearsBlocks.forEach(block => map[block] = 'shears');
-    swordBlocks.forEach(block => {
-      // Sword is secondary for these blocks
-      if (!map[block]) map[block] = 'sword';
-    });
-    
+    const blocks = this.mcData.blocksByName || {};
+    const itemsById = this.mcData.items || {};
+
+    const nameIncludes = (name, parts) => parts.some(p => name.includes(p));
+
+    const materialToTool = (material) => {
+      if (!material) return null;
+      const m = material.toLowerCase();
+      if (m.includes('rock') || m.includes('stone') || m.includes('metal')) return 'pickaxe';
+      if (m.includes('wood') || m.includes('nether_wood')) return 'axe';
+      if (m.includes('earth') || m.includes('ground') || m.includes('dirt') || m.includes('sand') || m.includes('clay') || m.includes('snow')) return 'shovel';
+      if (m.includes('wool') || m.includes('web') || m.includes('plant')) return 'shears';
+      return null;
+    };
+
+    const nameHeuristic = (name) => {
+      // ordered heuristics based on common blocks
+      if (nameIncludes(name, ['_ore', 'deepslate', 'stone', 'bricks', 'basalt', 'blackstone', 'obsidian', 'netherrack', 'end_stone', 'prismarine', 'terracotta', 'furnace', 'anvil', 'rail', 'hopper', 'dispenser', 'dropper', 'observer', 'piston', 'lantern', 'chain'])) return 'pickaxe';
+      if (nameIncludes(name, ['_log', '_planks', '_wood', 'hyphae', '_stem', 'fence', 'door', 'stairs', 'slab', 'crafting_table', 'barrel', 'chest', 'bookshelf', 'lectern', 'campfire', 'beehive', 'bee_nest', 'bamboo_block', 'stripped_bamboo_block'])) return 'axe';
+      if (nameIncludes(name, ['dirt', 'gravel', 'sand', 'mud', 'soul', 'farmland', 'dirt_path', 'powder_snow', 'snow', 'concrete_powder', 'clay'])) return 'shovel';
+      if (nameIncludes(name, ['leaves', 'hay_block', 'dried_kelp_block', 'target', 'wart_block', 'sponge', 'moss_', 'sculk'])) return 'hoe';
+      if (nameIncludes(name, ['wool', 'cobweb', 'vine', 'lichen', 'seagrass', 'kelp', 'twisting_vines', 'weeping_vines'])) return 'shears';
+      if (nameIncludes(name, ['bamboo'])) return 'sword';
+      return null;
+    };
+
+    const itemNameToToolType = (itemName) => {
+      if (!itemName) return null;
+      if (itemName.includes('pickaxe')) return 'pickaxe';
+      if (itemName.includes('axe')) return 'axe';
+      if (itemName.includes('shovel')) return 'shovel';
+      if (itemName.includes('hoe')) return 'hoe';
+      if (itemName.includes('shears')) return 'shears';
+      if (itemName.includes('sword')) return 'sword';
+      return null;
+    };
+
+    for (const [name, block] of Object.entries(blocks)) {
+      let tool = null;
+      // 1) Prefer harvestTools if defined
+      if (block.harvestTools && Object.keys(block.harvestTools).length > 0) {
+        const toolIds = Object.keys(block.harvestTools).map(id => parseInt(id, 10));
+        // Map candidate tool ids to tool types and pick the most specific (non-null) one
+        for (const id of toolIds) {
+          const item = itemsById[id];
+          const t = itemNameToToolType(item?.name);
+          if (t) { tool = t; break; }
+        }
+      }
+
+      // 2) Fall back to material
+      if (!tool) {
+        tool = materialToTool(block.material);
+      }
+
+      // 3) Fall back to name heuristics
+      if (!tool) {
+        tool = nameHeuristic(name);
+      }
+
+      if (tool) {
+        map[name] = tool;
+      }
+    }
+
+    // Explicit overrides for known edge cases where fastest tool differs
+    map['cobweb'] = map['cobweb'] || 'shears';
+    map['bamboo'] = map['bamboo'] || 'sword';
+
     return map;
   }
 
@@ -260,15 +220,15 @@ export default class ToolHandler {
   getOptimalToolType(block) {
     if (!block || block.type === 0) return null;
     
-    const blockName = block.name;
-    const toolType = this.blockToolMap[blockName];
+  const blockName = block.name;
+  const toolType = this.blockToolMap[blockName];
     
     if (toolType) {
       this._emitDebug(`Block ${blockName} -> optimal tool: ${toolType}`);
       return toolType;
     }
     
-    // Fallback: check block material properties from mcData
+    // Fallback: check live block data from mcData for harvestTools/material
     try {
       const blockData = this.mcData.blocksByName[blockName];
       if (blockData) {
@@ -284,6 +244,8 @@ export default class ToolHandler {
               if (toolData.name.includes('axe')) return 'axe';
               if (toolData.name.includes('shovel')) return 'shovel';
               if (toolData.name.includes('hoe')) return 'hoe';
+              if (toolData.name.includes('shears')) return 'shears';
+              if (toolData.name.includes('sword')) return 'sword';
             }
           }
         }
@@ -294,6 +256,7 @@ export default class ToolHandler {
           if (material.includes('rock') || material.includes('stone')) return 'pickaxe';
           if (material.includes('wood')) return 'axe';
           if (material.includes('dirt') || material.includes('sand')) return 'shovel';
+          if (material.includes('wool') || material.includes('web') || material.includes('plant')) return 'shears';
         }
       }
     } catch (e) {

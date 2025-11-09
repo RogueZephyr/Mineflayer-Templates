@@ -15,14 +15,14 @@ export default class SaveChestLocation {
     try {
       await fs.access(this.dataPath);
       return;
-    } catch (e) {
+    } catch (_e) {
       // migrate from src/config if present, otherwise create an empty file
       try {
         const raw = await fs.readFile(this.srcPath, 'utf8');
         await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
         await fs.writeFile(this.dataPath, raw, 'utf8');
         return;
-      } catch (err) {
+      } catch (_err) {
         await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
         await fs.writeFile(this.dataPath, JSON.stringify({}, null, 2) + '\n', 'utf8');
       }

@@ -24,40 +24,38 @@ import DebugTools from '../utils/DebugTools.js';
 import PathfindingUtil from '../utils/PathfindingUtil.js';
 import ToolHandler from '../utils/ToolHandler.js';
 import ScaffoldingUtil from '../utils/ScaffoldingUtil.js';
+import DepositUtil from '../utils/DepositUtil.js';
 import AreaRegistry from '../state/AreaRegistry.js';
 import ProxyManager from '../utils/ProxyManager.js';
-import fs from 'fs';
+import fs from 'fs'; // kept for potential legacy usage (no direct sync reads now) // eslint-disable-line no-unused-vars
+import fsp from 'fs/promises';
 import path from 'path';
 
 export default class BotController {
   static usernameList = null
   static usedNames = new Set()
 
-  static loadUsernameList() {
+  static async loadUsernameList() {
     if (BotController.usernameList !== null) return BotController.usernameList;
-    
+    const namesPath = path.join(process.cwd(), 'data', 'botNames.json');
     try {
-      const namesPath = path.join(process.cwd(), 'data', 'botNames.json');
-      const data = JSON.parse(fs.readFileSync(namesPath, 'utf8'));
+      const raw = await fsp.readFile(namesPath, 'utf8');
+      const data = JSON.parse(raw);
       BotController.usernameList = data.names || [];
-      
-      if (BotController.usernameList.length === 0) {
+      if (!Array.isArray(BotController.usernameList) || BotController.usernameList.length === 0) {
         console.warn('[BotController] No names found in botNames.json, using fallback');
-        BotController.usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t'];
+        BotController.usernameList = ['bot'];
       }
-      
-      return BotController.usernameList;
     } catch (e) {
-      console.warn('[BotController] Failed to load botNames.json, using fallback:', e.message);
-      BotController.usernameList = ['RogueW0lfy', 'Subject_9-17', 'L@b_R4t'];
-      return BotController.usernameList;
+      console.warn('[BotController] Failed to load botNames.json asynchronously, using fallback:', e.message);
+      BotController.usernameList = ['bot'];
     }
+    return BotController.usernameList;
   }
 
   constructor(config, username = null, coordinator = null, instanceId = 0) {
-    // Ensure username list is loaded
-    BotController.loadUsernameList();
-    this.username = username || this.getAvailableUsername();
+    // Defer username selection until start() to allow async loading
+    this.username = username || null;
     this.config = config;
     this.bot = null;
     this.mcData = null;
@@ -92,7 +90,19 @@ export default class BotController {
 
   start(retryCount = 0, maxRetries = 3) {
     // Return a promise that resolves when bot successfully logs in
-    return new Promise(async (resolve, reject) => {
+    return new Promise((resolve, reject) => {
+      // Wrap async logic without using an async executor
+      (async () => {
+      // Ensure username list is loaded asynchronously before selecting a name
+      try {
+        await BotController.loadUsernameList();
+        if (!this.username) {
+          this.username = this.getAvailableUsername();
+        }
+  } catch (_e) {
+        console.warn('[BotController] Username list load failed, continuing with fallback username');
+        if (!this.username) this.username = 'Bot';
+      }
       // Build bot options
       const botOptions = {
         host: this.config.host,
@@ -101,8 +111,9 @@ export default class BotController {
         version: this.config.version || 'auto'
       };
 
-      // Initialize proxy manager
-      const proxyManager = new ProxyManager(this.config, this.logger, this.instanceId);
+  // Initialize proxy manager (ensure async pool load completed first)
+  await ProxyManager.loadProxyPool(this.logger);
+  const proxyManager = new ProxyManager(this.config, this.logger, this.instanceId);
       
       // Assign proxy from pool if rotation is enabled
       if (ProxyManager.proxyPool?.rotation?.enabled) {
@@ -137,8 +148,8 @@ export default class BotController {
                 const ip = await proxyManager.fetchExternalIP();
                 if (ip) this.logger.info(`[Proxy] External IP (pre-login): ${ip}`);
                 else this.logger.warn('[Proxy] External IP could not be determined before login');
-              } catch (e) {
-                this.logger.warn(`[Proxy] IP check error: ${e.message || e}`);
+              } catch (_e) {
+                this.logger.warn(`[Proxy] IP check error: ${_e.message || _e}`);
               }
             }
           }
@@ -164,12 +175,20 @@ export default class BotController {
         } else {
           this.logger.warn('[BotController] pathfinder plugin not found in module import');
         }
-      } catch (e) {
-        this.logger.warn('[BotController] Failed to load pathfinder plugin:', e.message || e);
+      } catch (_e) {
+        this.logger.warn('[BotController] Failed to load pathfinder plugin:', _e.message || _e);
       }
+      
+      // Track login timeout to clear it once authenticated
+      let loginTimeout = null;
       
       // Basic lifecycle listeners
       this.bot.once('login', () => {
+        // Clear the login timeout
+        if (loginTimeout) {
+          clearTimeout(loginTimeout);
+          loginTimeout = null;
+        }
         this.onLogin();
         resolve(this); // Resolve promise when login succeeds
       });
@@ -196,7 +215,7 @@ export default class BotController {
           try {
             this.bot.removeAllListeners();
             this.bot.quit();
-          } catch (e) {
+          } catch (_e) {
             // Ignore cleanup errors
           }
           
@@ -229,9 +248,14 @@ export default class BotController {
       this.bot.on('disconnect', (packet) => this.logger.warn(`Disconnected: ${JSON.stringify(packet)}`));
 
       // Timeout after 30 seconds if login doesn't succeed
-      setTimeout(() => {
-        reject(new Error('Bot login timeout after 30 seconds'));
+      loginTimeout = setTimeout(() => {
+        if (loginTimeout) {
+          loginTimeout = null;
+          reject(new Error('Bot login timeout after 30 seconds'));
+        }
       }, 30000);
+
+      })().catch(reject);
     });
   }
 
@@ -327,6 +351,11 @@ export default class BotController {
     this.bot.pathfindingUtil = this.pathfindingUtil;
     this.logger.info('[BotController] PathfindingUtil initialized with path caching');
     
+    // Initialize centralized deposit utility
+    this.depositUtil = new DepositUtil(this.bot, this.logger);
+    this.bot.depositUtil = this.depositUtil;
+    this.logger.info('[BotController] DepositUtil initialized');
+    
     // Initialize scaffolding utility unless basic mode is requested
     const useBasicScaffolding = !!(this.config.behaviors?.woodcutting?.useBasicScaffolding);
     if (!useBasicScaffolding) {
@@ -403,7 +432,15 @@ export default class BotController {
     this.logger.info('HomeBehavior initialized successfully!');
 
     this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors, this.config);
-    this.logger.info('ChatCommandHandler initialized successfully!');
+    // Initialize asynchronously but do not block spawn completion
+    (async () => {
+      try {
+        await this.behaviors.chatCommands.init();
+        this.logger.info('ChatCommandHandler initialized successfully!');
+      } catch (e) {
+        this.logger.warn(`ChatCommandHandler init failed: ${e.message || e}`);
+      }
+    })();
 
     // Set up hunger check interval (always runs, logs only in debug mode)
     if (this.hungerCheckInterval) {
@@ -464,6 +501,16 @@ export default class BotController {
     if (this.coordinatorCleanupInterval) {
       clearInterval(this.coordinatorCleanupInterval);
       this.coordinatorCleanupInterval = null;
+    }
+    
+    // Dispose of chat command handler listeners
+    if (this.bot && this.bot.chatCommandHandler && typeof this.bot.chatCommandHandler.dispose === 'function') {
+      this.bot.chatCommandHandler.dispose();
+    }
+    
+    // Dispose of path cache listeners
+    if (this.pathfindingUtil && this.pathfindingUtil.pathCache && typeof this.pathfindingUtil.pathCache.dispose === 'function') {
+      this.pathfindingUtil.pathCache.dispose();
     }
 
     // Clear behaviors to prevent references to old bot instance

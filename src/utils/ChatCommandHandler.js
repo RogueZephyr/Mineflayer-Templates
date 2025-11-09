@@ -61,10 +61,55 @@ export default class ChatCommandHandler {
     this.debug = new DebugTools(this.bot, this.logger, this.behaviors, { chestRegistry: this.chestRegistry, depositBehavior: this.depositBehavior, areaRegistry: this.areaRegistry });
     this.bot.debugTools = this.debug;
     
-    // Init everything
+  // Defer heavy initialization (commands, listeners, console input) until async init() is called
+  // This allows whitelist to load asynchronously first.
+    
+    // Track listener references for cleanup
+    this._chatHandler = null;
+    this._whisperHandler = null;
+    this._rawChatHandler = null;
+  }
+  
+  /**
+   * Asynchronous initialization sequence to load whitelist and set up listeners/commands.
+   */
+  async init() {
+    try {
+      await this.whitelist.loadWhitelist();
+      this.logger.info(`[ChatCommandHandler] Whitelist loaded (${Object.keys(this.whitelist.whitelist).length} entries)`);
+  } catch (_e) {
+      this.logger.warn('[ChatCommandHandler] Whitelist async load failed, proceeding with empty list');
+    }
     this.registerDefaultCommands();
     this.initListeners();
     this.initConsoleInput();
+    this.logger.info('[ChatCommandHandler] Initialization complete');
+    return this;
+  }
+  
+  /**
+   * Dispose of all listeners and cleanup resources
+   * Called by BotController on shutdown to prevent memory leaks
+   */
+  dispose() {
+    // Remove bot listeners
+    if (this._chatHandler) {
+      this.bot.removeListener('chat', this._chatHandler);
+      this._chatHandler = null;
+    }
+    if (this._whisperHandler) {
+      this.bot.removeListener('whisper', this._whisperHandler);
+      this._whisperHandler = null;
+    }
+    if (this._rawChatHandler && this.bot._client) {
+      this.bot._client.removeListener('chat', this._rawChatHandler);
+      this._rawChatHandler = null;
+    }
+    
+    // Clear rate limit tracking
+    this.rateLimits.clear();
+    
+    this.logger.info('[ChatCommandHandler] Disposed');
   }
 
   // ------------------------------
@@ -159,26 +204,28 @@ export default class ChatCommandHandler {
   // ------------------------------
   initListeners() {
     // Public chat commands
-    this.bot.on('chat', (username, message) => {
+    this._chatHandler = async (username, message) => {
       try {
-        this.handleMessage(username, message, false);
+        await this.handleMessage(username, message, false);
       } catch (e) {
         this.logger.error(`[Chat] Error handling public message from ${username}: ${e.message || e}`);
       }
-    });
+    };
+    this.bot.on('chat', this._chatHandler);
 
     // Private messages via /msg or /tell (standard Mineflayer event)
-    this.bot.on('whisper', (username, message) => {
+    this._whisperHandler = async (username, message) => {
       try {
-        this.handleMessage(username, message, true);
+        await this.handleMessage(username, message, true);
       } catch (e) {
         this.logger.error(`[Chat] Error handling whisper from ${username}: ${e.message || e}`);
       }
-    });
+    };
+    this.bot.on('whisper', this._whisperHandler);
 
     // Raw message listener for custom whisper formats
     // Some server plugins don't trigger the 'whisper' event properly
-    this.bot._client.on('chat', (packet) => {
+    this._rawChatHandler = async (packet) => {
       try {
         const jsonMsg = packet.message;
         const rawText = this._extractRawText(jsonMsg);
@@ -187,7 +234,7 @@ export default class ChatCommandHandler {
           const whisperData = this._parseCustomWhisper(rawText);
           if (whisperData) {
             this.logger.info(`[Whisper] Detected custom format from ${whisperData.username}: ${whisperData.message}`);
-            this.handleMessage(whisperData.username, whisperData.message, true);
+            await this.handleMessage(whisperData.username, whisperData.message, true);
             return;
           }
           
@@ -195,13 +242,14 @@ export default class ChatCommandHandler {
           const chatData = this._parseCustomChat(jsonMsg, rawText);
           if (chatData) {
             this.logger.info(`[Chat] Custom format detected from ${chatData.username}: ${chatData.message}`);
-            this.handleMessage(chatData.username, chatData.message, false);
+            await this.handleMessage(chatData.username, chatData.message, false);
           }
         }
       } catch (e) {
         // Silent fail - this is just a fallback for custom formats
       }
-    });
+    };
+    this.bot._client.on('chat', this._rawChatHandler);
   }
 
   // ------------------------------
@@ -259,7 +307,7 @@ export default class ChatCommandHandler {
           message: match[2]
         };
       }
-    } catch (e) {
+  } catch (_e) {
       // Failed to parse, return null
     }
     
@@ -287,8 +335,8 @@ export default class ChatCommandHandler {
           messageGroup: pattern.messageGroup || 2
         });
         this.logger.info(`[Whisper] Loaded pattern: ${pattern.name}`);
-      } catch (e) {
-        this.logger.error(`[Whisper] Failed to compile pattern '${pattern.name}': ${e.message}`);
+    } catch (_e) {
+        this.logger.error(`[Whisper] Failed to compile pattern '${pattern.name}': ${_e.message || _e}`);
       }
     }
     
@@ -413,7 +461,7 @@ export default class ChatCommandHandler {
     return { isForThisBot: true, remainingArgs: args };
   }
 
-  handleMessage(username, message, isPrivate) {
+  async handleMessage(username, message, isPrivate) {
     if (username === this.bot.username) return;
 
     // Rate limiting check
@@ -435,8 +483,10 @@ export default class ChatCommandHandler {
     const commandName = parts.shift().toLowerCase();
     const args = parts;
 
-    if (this.commands.has(commandName)) {
+  if (this.commands.has(commandName)) {
       try {
+    // Ensure whitelist is loaded before permission checks
+    try { await this.whitelist.loadWhitelist(); } catch (_) { /* ignore, default empty */ }
         // Check if command is targeted at this bot
         const { isForThisBot, remainingArgs } = this.parseTargetedCommand(args);
         
@@ -472,12 +522,13 @@ export default class ChatCommandHandler {
         const handler = this.commands.get(commandName);
         // allow async handlers, pass remaining args after bot name filtering
         const res = handler.call(this, username, remainingArgs, isPrivate);
-        if (res instanceof Promise) res.catch(err => this.logger.error(`[Cmd:${commandName}] ${err.message || err}`));
+        if (res instanceof Promise) await res.catch(err => this.logger.error(`[Cmd:${commandName}] ${err.message || err}`));
       } catch (err) {
         this.logger.error(`[Cmd:${commandName}] Handler threw: ${err.message || err}`);
       }
     } else {
       // unknown command - only reply if whitelisted
+      try { await this.whitelist.loadWhitelist(); } catch (_) {}
       if (this.whitelist.isWhitelisted(username)) {
         this.reply(username, `Unknown command: ${commandName}`, isPrivate);
       }
@@ -502,10 +553,11 @@ export default class ChatCommandHandler {
         'Actions: eat, sleep, farm, wood, collect',
         'Mining: mine <strip|tunnel|stop|status>',
         'Tools: tools <status|report|check|equip>',
-        'Utility: loginv, drop, deposit, debug',
+        'Deposit: deposit, depositall, depositnearest',
+        'Utility: loginv, drop, debug',
         '',
         'For detailed help: !help <command>',
-        'Examples: !help mine, !help tools'
+        'Examples: !help mine, !help tools, !help deposit'
       ];
       
       // Detailed help for specific commands
@@ -550,6 +602,22 @@ export default class ChatCommandHandler {
         helpMsg.push('!farm stop - Stop farming');
         helpMsg.push('Set area with:');
         helpMsg.push('  !setarea farm start/end');
+      } else if (cmd === 'deposit') {
+        helpMsg.length = 0;
+        helpMsg.push('=== Deposit Commands ===');
+        helpMsg.push('!deposit [type] - Deposit to nearest chest');
+        helpMsg.push('!deposit <x> <y> <z> [type] - Deposit to specific chest');
+        helpMsg.push('!depositall - Deposit all items');
+        helpMsg.push('!depositnearest [type] [radius] - Deposit with custom radius');
+        helpMsg.push('');
+        helpMsg.push('Types: all, wood, ores, crops, resources');
+        helpMsg.push('Examples:');
+        helpMsg.push('  • !deposit ores');
+        helpMsg.push('  • !deposit 100 64 200 wood');
+        helpMsg.push('  • !depositnearest crops 40');
+        helpMsg.push('');
+        helpMsg.push('Smart fallback: Uses nearest chest first,');
+        helpMsg.push('then categorized chests if available');
       }
       
       if (playerInfo && !cmd) {
@@ -566,7 +634,7 @@ export default class ChatCommandHandler {
       if (!isPrivate) this.reply(username, 'Check private messages for help!', isPrivate);
     });
 
-    this.register('whoami', (username, args, isPrivate) => {
+  this.register('whoami', (username, args, isPrivate) => {
       const playerInfo = this.whitelist.getPlayerInfo(username);
       if (!playerInfo) {
         this.reply(username, 'You are not whitelisted', isPrivate);
@@ -576,11 +644,12 @@ export default class ChatCommandHandler {
       const bots = playerInfo.allowedBots.includes('*') ? 'All bots' : playerInfo.allowedBots.join(', ');
       const cmds = playerInfo.allowedCommands.includes('*') ? 'All commands' : `${playerInfo.allowedCommands.length} commands`;
       
-      this.bot.whisper(username, '=== Your Permissions ===');
-      this.bot.whisper(username, `Allowed Bots: ${bots}`);
-      this.bot.whisper(username, `Allowed Commands: ${cmds}`);
+      // Always private summary
+      this.reply(username, '=== Your Permissions ===', true);
+      this.reply(username, `Allowed Bots: ${bots}`, true);
+      this.reply(username, `Allowed Commands: ${cmds}`, true);
       if (playerInfo.description) {
-        this.bot.whisper(username, `Note: ${playerInfo.description}`);
+        this.reply(username, `Note: ${playerInfo.description}`, true);
       }
     });
 
@@ -601,8 +670,8 @@ export default class ChatCommandHandler {
         if (players.length === 0) {
           this.reply(username, 'No players whitelisted', isPrivate);
         } else {
-          this.bot.whisper(username, `Whitelisted players (${players.length}):`);
-          players.forEach(p => this.bot.whisper(username, `- ${p}`));
+          this.reply(username, `Whitelisted players (${players.length}):`, true);
+          players.forEach(p => this.reply(username, `- ${p}`, true));
         }
       } else {
         this.reply(username, 'Usage: whitelist <reload|list>', isPrivate);
@@ -616,23 +685,23 @@ export default class ChatCommandHandler {
         if (this._originalBotChat) {
           this._originalBotChat(message);
         } else {
-          this.bot.chat(message);
+          this.reply(username, message, isPrivate);
         }
       }
     });
 
     // 🧭 Movement (using centralized PathfindingUtil)
-    this.register('come', async (username) => {
+    this.register('come', async (username, args, isPrivate) => {
       if (!this.bot.pathfindingUtil) {
-        this.bot.chat('Pathfinding not available');
+        this.reply(username, 'Pathfinding not available', isPrivate);
         return;
       }
       
       try {
         await this.bot.pathfindingUtil.gotoPlayer(username, 3);
-        this.bot.chat(`Coming to ${username}`);
+        this.reply(username, `Coming to ${username}`, isPrivate);
       } catch (e) {
-        this.bot.chat(`Failed to come: ${e.message}`);
+        this.reply(username, `Failed to come: ${e.message}`, isPrivate);
       }
     });
 
@@ -655,9 +724,9 @@ export default class ChatCommandHandler {
       
       try {
         await this.bot.pathfindingUtil.goto({ x, y, z }, 30000, 'goto_command');
-        this.bot.chat(`Arrived at ${x}, ${y}, ${z}`);
+        this.reply(username, `Arrived at ${x}, ${y}, ${z}`, isPrivate);
       } catch (e) {
-        this.bot.chat(`Failed to go to location: ${e.message}`);
+        this.reply(username, `Failed to go to location: ${e.message}`, isPrivate);
       }
     });
 
@@ -674,9 +743,9 @@ export default class ChatCommandHandler {
       
       try {
         this.bot.pathfindingUtil.followPlayer(args[0], 3);
-        this.bot.chat(`Following ${args[0]}`);
+        this.reply(username, `Following ${args[0]}`, isPrivate);
       } catch (e) {
-        this.bot.chat(`Failed to follow: ${e.message}`);
+        this.reply(username, `Failed to follow: ${e.message}`, isPrivate);
       }
     });
 
@@ -811,52 +880,112 @@ export default class ChatCommandHandler {
       else this.reply(username, `No ${type} found to drop`, isPrivate);
     });
 
-    // 🧱 Deposit manually (with coords)
+    // 🧱 Deposit (smart: nearest chest OR specific coordinates)
     this.register('deposit', async (username, args, isPrivate) => {
-      if (!this.behaviors.inventory) {
-        this.reply(username, "Inventory behavior not available.", isPrivate);
-        return;
+      // Usage:
+      // !deposit [type] - Deposit to nearest chest
+      // !deposit <x> <y> <z> [type] - Deposit to specific chest
+      
+      // Parse arguments: check if first 3 args are coordinates
+      let x, y, z, type;
+      let useCoordinates = false;
+      
+      if (args.length >= 3) {
+        const [arg0, arg1, arg2] = args;
+        const possibleX = parseInt(arg0, 10);
+        const possibleY = parseInt(arg1, 10);
+        const possibleZ = parseInt(arg2, 10);
+        
+        // If first 3 args are valid integers, treat as coordinates
+        if (!isNaN(possibleX) && !isNaN(possibleY) && !isNaN(possibleZ)) {
+          useCoordinates = true;
+          x = possibleX;
+          y = possibleY;
+          z = possibleZ;
+          type = (args[3] || 'all').toLowerCase();
+        }
+      }
+      
+      // If not using coordinates, first arg is the type
+      if (!useCoordinates) {
+        type = (args[0] || 'all').toLowerCase();
       }
 
-      if (args.length < 3) {
-        this.reply(username, "Usage: !deposit <x> <y> <z> [all|wood|ores|resources|itemName]", isPrivate);
-        return;
+      // Try DepositUtil first (nearest chest)
+      if (!useCoordinates && this.bot.depositUtil) {
+        this.reply(username, `Depositing ${type} to nearest chest...`, isPrivate);
+        try {
+          const result = await this.bot.depositUtil.depositToNearest(type, 30);
+          
+          if (result.success) {
+            this.reply(username, `✅ Deposited ${result.depositedCount} items (${[...new Set(result.depositedItems)].join(', ')})`, isPrivate);
+          } else {
+            this.reply(username, `⚠️ ${result.error || 'No items deposited'}`, isPrivate);
+          }
+          return;
+        } catch (err) {
+          this.logger.error(`[Deposit] DepositUtil failed: ${err.message}`);
+          this.reply(username, `Failed to deposit: ${err.message}`, isPrivate);
+          return;
+        }
       }
+      
+      // Fallback: manual coordinates using inventory behavior
+      if (useCoordinates) {
+        if (!this.behaviors.inventory) {
+          this.reply(username, "Inventory behavior not available.", isPrivate);
+          return;
+        }
 
-      const [xStr, yStr, zStr, typeArg] = args;
-      const x = parseInt(xStr, 10);
-      const y = parseInt(yStr, 10);
-      const z = parseInt(zStr, 10);
-      const type = (typeArg || 'all').toLowerCase();
-
-      if (isNaN(x) || isNaN(y) || isNaN(z)) {
-        this.reply(username, "Invalid coordinates. Usage: !deposit <x> <y> <z> [all|wood|ores|resources|itemName]", isPrivate);
-        return;
-      }
-
-      this.bot.chat(`Depositing ${type} to chest at (${x}, ${y}, ${z})...`);
-      try {
-        const success = await this.behaviors.inventory.depositToChest({ x, y, z }, type);
-        if (success) this.bot.chat(`✅ Successfully deposited ${type} items.`);
-        else this.bot.chat(`⚠️ No items deposited.`);
-      } catch (err) {
-        this.reply(username, `❌ Failed to deposit items: ${err.message}`, isPrivate);
+        this.reply(username, `Depositing ${type} to chest at (${x}, ${y}, ${z})...`, isPrivate);
+        try {
+          const success = await this.behaviors.inventory.depositToChest({ x, y, z }, type);
+          if (success) this.reply(username, `✅ Successfully deposited ${type} items.`, isPrivate);
+          else this.reply(username, `⚠️ No items deposited.`, isPrivate);
+        } catch (err) {
+          this.reply(username, `❌ Failed to deposit items: ${err.message}`, isPrivate);
+        }
+      } else {
+        // No coordinates provided and DepositUtil not available
+        this.reply(username, "Usage: !deposit [type] OR !deposit <x> <y> <z> [type]", isPrivate);
+        this.reply(username, "Types: all, wood, ores, crops, resources, or item name", isPrivate);
       }
     });
 
-    // 📦 Deposit all items to their categorized chests
+    // 📦 Deposit all items (tries nearest chest first, then categorized chests)
     this.register('depositall', async (username, args, isPrivate) => {
+      // Try DepositUtil first (nearest chest)
+      if (this.bot.depositUtil) {
+        try {
+          this.reply(username, 'Depositing all items to nearest chest...', true);
+          const result = await this.bot.depositUtil.depositToNearest('all', 30);
+          
+          if (result.success) {
+            this.reply(username, `✅ Deposited ${result.depositedCount} items to nearest chest`, true);
+            return;
+          } else {
+            this.logger.warn(`[DepositAll] DepositUtil failed: ${result.error}`);
+            // Fall through to categorized deposit
+          }
+        } catch (err) {
+          this.logger.error(`[DepositAll] DepositUtil error: ${err.message}`);
+          // Fall through to categorized deposit
+        }
+      }
+      
+      // Fallback: try categorized deposit via DepositBehavior
       if (!this.depositBehavior || typeof this.depositBehavior.depositAll !== 'function') {
-        this.bot.whisper(username, 'Deposit behavior not available on this bot.');
+        this.reply(username, 'No deposit method available. Try !deposit [type] instead.', true);
         return;
       }
+      
       try {
-        this.bot.whisper(username, 'Starting deposit of inventory to categorized chests...');
+        this.reply(username, 'Trying categorized chest deposit...', true);
         await this.depositBehavior.depositAll();
-        this.bot.whisper(username, 'Deposit complete.');
+        this.reply(username, 'Deposit complete.', true);
       } catch (err) {
         this.logger.error(`[DepositAll] ${err.message || err}`);
-        this.bot.whisper(username, `Deposit failed: ${err.message || err}`);
+        this.reply(username, `Deposit failed: ${err.message || err}`, true);
       }
     });
 
@@ -892,19 +1021,29 @@ export default class ChatCommandHandler {
       }
     });
 
-    // �🧭 Deposit nearest
+    // 🧭 Deposit to nearest chest
     this.register('depositnearest', async (username, args, isPrivate) => {
-      if (!this.behaviors.inventory) {
-        this.reply(username, "Inventory behavior not available.", isPrivate);
+      const type = (args[0] || 'all').toLowerCase();
+      const searchRadius = args[1] ? parseInt(args[1]) : 30;
+      
+      if (!this.bot.depositUtil) {
+        this.reply(username, "DepositUtil not available.", isPrivate);
         return;
       }
 
-      const type = (args[0] || 'all').toLowerCase();
-      this.bot.chat(`Depositing ${type} items into nearest chest...`);
+      this.reply(username, `Depositing ${type} items to nearest chest (${searchRadius}m radius)...`, isPrivate);
       try {
-        const success = await this.behaviors.inventory.depositNearest(type);
-        if (success) this.bot.chat(`✅ Successfully deposited ${type} items.`);
-        else this.bot.chat(`⚠️ No items deposited or no nearby chest found.`);
+        const result = await this.bot.depositUtil.depositToNearest(type, searchRadius);
+        
+        if (result.success) {
+          const uniqueItems = [...new Set(result.depositedItems)];
+          this.reply(username, `✅ Deposited ${result.depositedCount} items`, isPrivate);
+          if (uniqueItems.length > 0 && uniqueItems.length <= 5) {
+            this.reply(username, `Items: ${uniqueItems.join(', ')}`, isPrivate);
+          }
+        } else {
+          this.reply(username, `⚠️ ${result.error || 'No items deposited'}`, isPrivate);
+        }
       } catch (err) {
         this.reply(username, `❌ Deposit failed: ${err.message}`, isPrivate);
       }
@@ -960,20 +1099,20 @@ export default class ChatCommandHandler {
         const action = args[0].toLowerCase();
         if (action === 'on') {
           lookBehavior.enable();
-          this.bot.chat("LookBehavior enabled.");
+          this.reply(username, 'LookBehavior enabled.', isPrivate);
         } else if (action === 'off') {
           lookBehavior.disable();
-          this.bot.chat("LookBehavior disabled.");
+          this.reply(username, 'LookBehavior disabled.', isPrivate);
         } else {
-          this.bot.chat("Usage: !look <on|off>");
+          this.reply(username, 'Usage: !look <on|off>', isPrivate);
         }
       } else {
         if (lookBehavior.enabled) {
           lookBehavior.disable();
-          this.bot.chat("LookBehavior disabled.");
+          this.reply(username, 'LookBehavior disabled.', isPrivate);
         } else {
           lookBehavior.enable();
-          this.bot.chat("LookBehavior enabled.");
+          this.reply(username, 'LookBehavior enabled.', isPrivate);
         }
       }
     });
@@ -987,8 +1126,8 @@ export default class ChatCommandHandler {
 
       if (args.length < 2) {
         this.reply(username, "Usage: !setarea <type> <start|end|clear> [x y z]", isPrivate);
-        this.bot.chat("Types: farm, quarry, lumber");
-        this.bot.chat("Example: !setarea farm start");
+  this.reply(username, 'Types: farm, quarry, lumber', isPrivate);
+  this.reply(username, 'Example: !setarea farm start', isPrivate);
         return;
       }
 
@@ -998,19 +1137,19 @@ export default class ChatCommandHandler {
       if (action === 'clear') {
         try {
           await this.bot.areaRegistry.deleteArea(type);
-          this.bot.chat(`Cleared ${type} area`);
+          this.reply(username, `Cleared ${type} area`, isPrivate);
           // Also clear behavior-specific cache if present
           if (type === 'farm' && this.behaviors.farm) {
             this.behaviors.farm.farmingArea = null;
           }
         } catch (e) {
-          this.bot.chat(`Failed to clear area: ${e.message}`);
+          this.reply(username, `Failed to clear area: ${e.message}`, isPrivate);
         }
         return;
       }
 
       if (!['start', 'end'].includes(action)) {
-        this.bot.chat("Action must be 'start', 'end', or 'clear'");
+  this.reply(username, "Action must be 'start', 'end', or 'clear'", isPrivate);
         return;
       }
 
@@ -1019,7 +1158,7 @@ export default class ChatCommandHandler {
         // Manual coordinates
         [x, y, z] = args.slice(2, 5).map(Number);
         if ([x, y, z].some(n => Number.isNaN(n))) {
-          this.bot.chat('Invalid coordinates');
+          this.reply(username, 'Invalid coordinates', isPrivate);
           return;
         }
       } else {

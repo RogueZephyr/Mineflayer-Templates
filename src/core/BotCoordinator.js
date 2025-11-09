@@ -1,13 +1,14 @@
 // src/core/BotCoordinator.js
 import { Vec3 } from 'vec3';
 import { Mutex } from 'async-mutex';
+import MetricsAdapter from '../utils/MetricsAdapter.js';
 
 /**
  * BotCoordinator - Shared state manager for multi-bot coordination
  * Prevents bots from doing the same tasks and colliding with each other
  */
 export default class BotCoordinator {
-  constructor() {
+  constructor({ metrics = null } = {}) {
     this.bots = new Map(); // botId -> { bot, lastUpdate, position }
     this.claimedBlocks = new Map(); // 'x,y,z' -> { botId, timestamp, task }
     this.claimedAreas = new Map(); // areaId -> { botId, timestamp, bounds }
@@ -17,6 +18,8 @@ export default class BotCoordinator {
     this.areaClaimDuration = 300000; // 5 minutes
     this.goalClaimDuration = 15000; // 15 seconds for pathfinding goals
     this.mutex = new Mutex(); // For thread-safe operations
+    // Metrics (optional external injection)
+  this.metrics = metrics || new MetricsAdapter();
   }
 
   /**
@@ -33,9 +36,9 @@ export default class BotCoordinator {
     });
     
     // Update position periodically
-    const updateInterval = setInterval(() => {
+    const updateInterval = globalThis.setInterval(() => {
       if (!this.bots.has(botId)) {
-        clearInterval(updateInterval);
+        globalThis.clearInterval(updateInterval);
         return;
       }
       
@@ -177,7 +180,7 @@ export default class BotCoordinator {
    */
   divideArea(area, botCount, botName = 'Unknown') {
     if (!area || !area.start || !area.end) {
-      console.log(`[Coordinator][${botName}] divideArea: invalid area`, area);
+  this.metrics.warn('[Coordinator] Invalid area for division', { botName, area });
       return [];
     }
     if (botCount < 1) return [area];
@@ -192,7 +195,7 @@ export default class BotCoordinator {
     const width = maxX - minX + 1;
     const depth = maxZ - minZ + 1;
     
-    console.log(`[Coordinator][${botName}] Dividing area: ${width}x${depth} for ${botCount} bots`);
+  this.metrics.info('[Coordinator] Dividing area', { botName, width, depth, botCount });
     
     const zones = [];
     
@@ -200,7 +203,7 @@ export default class BotCoordinator {
     if (width >= depth) {
       // Divide by X
       const zoneWidth = Math.ceil(width / botCount);
-      console.log(`[Coordinator][${botName}] Dividing by X axis: ${zoneWidth} blocks per zone`);
+  this.metrics.debug('[Coordinator] Axis division', { axis: 'X', zoneWidth, botName });
       for (let i = 0; i < botCount; i++) {
         const zoneMinX = minX + (i * zoneWidth);
         const zoneMaxX = Math.min(zoneMinX + zoneWidth - 1, maxX);
@@ -211,13 +214,13 @@ export default class BotCoordinator {
             end: { x: zoneMaxX, y: maxY, z: maxZ }
           };
           zones.push(zone);
-          console.log(`[Coordinator][${botName}] Zone ${i + 1}: X ${zoneMinX} to ${zoneMaxX}`);
+      this.metrics.debug('[Coordinator] Zone assigned', { index: i + 1, axis: 'X', min: zoneMinX, max: zoneMaxX, botName });
         }
       }
     } else {
       // Divide by Z
       const zoneDepth = Math.ceil(depth / botCount);
-      console.log(`[Coordinator][${botName}] Dividing by Z axis: ${zoneDepth} blocks per zone`);
+  this.metrics.debug('[Coordinator] Axis division', { axis: 'Z', zoneDepth, botName });
       for (let i = 0; i < botCount; i++) {
         const zoneMinZ = minZ + (i * zoneDepth);
         const zoneMaxZ = Math.min(zoneMinZ + zoneDepth - 1, maxZ);
@@ -228,7 +231,7 @@ export default class BotCoordinator {
             end: { x: maxX, y: maxY, z: zoneMaxZ }
           };
           zones.push(zone);
-          console.log(`[Coordinator][${botName}] Zone ${i + 1}: Z ${zoneMinZ} to ${zoneMaxZ}`);
+          this.metrics.debug('[Coordinator] Zone assigned', { index: i + 1, axis: 'Z', min: zoneMinZ, max: zoneMaxZ, botName });
         }
       }
     }
@@ -368,28 +371,46 @@ export default class BotCoordinator {
    * Clean up expired claims
    */
   cleanup() {
+    const stop = this.metrics.startTimer('coordinator_cleanup');
     const now = Date.now();
-    
+    let removedBlocks = 0;
+    let removedAreas = 0;
+    let removedGoals = 0;
+
     // Clean blocks
     for (const [key, claim] of this.claimedBlocks.entries()) {
       if (now - claim.timestamp > this.blockClaimDuration) {
         this.claimedBlocks.delete(key);
+        removedBlocks++;
       }
     }
-    
     // Clean areas
     for (const [key, claim] of this.claimedAreas.entries()) {
       if (now - claim.timestamp > this.areaClaimDuration) {
         this.claimedAreas.delete(key);
+        removedAreas++;
       }
     }
-    
     // Clean pathfinding goals
     for (const [botId, goal] of this.pathfindingGoals.entries()) {
       if (now - goal.timestamp > this.goalClaimDuration) {
         this.pathfindingGoals.delete(botId);
+        removedGoals++;
       }
     }
+
+    if (removedBlocks || removedAreas || removedGoals) {
+      this.metrics.inc('coordinator_blocks_cleaned', {}, removedBlocks);
+      this.metrics.inc('coordinator_areas_cleaned', {}, removedAreas);
+      this.metrics.inc('coordinator_goals_cleaned', {}, removedGoals);
+      this.metrics.info('[Coordinator] Cleanup', {
+        removedBlocks,
+        removedAreas,
+        removedGoals,
+        activeBots: this.bots.size
+      });
+    }
+    stop();
   }
 
   /**

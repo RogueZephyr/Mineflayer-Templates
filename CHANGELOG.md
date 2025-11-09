@@ -1,5 +1,97 @@
 # CHANGELOG - ToolHandler Integration & Refactoring
 
+## Version 2.2.0 - November 8, 2025
+
+### ✨ Quick Wins, Async I/O, Tooling, Deposit Standardization, and Reply Normalization
+
+#### Highlights
+- Listener teardown hooks added to prevent memory leaks on reconnects
+- Login timeout cleared correctly to avoid unhandled rejections
+- Config validation optimized (Ajv compiled once, structured errors returned)
+- Async disk I/O for usernames, whitelist, and proxy pool with memoization
+- ESLint/Prettier/Vitest wiring with initial smoke test
+- Command replies normalized to respect private/public context
+- ToolHandler refactored to derive mappings dynamically from minecraft-data
+- **Centralized DepositUtil for all resource-gathering behaviors**
+- **Smart deposit commands with nearest chest fallback**
+
+#### Details
+- BotController
+    - Username rotation list now loads asynchronously from `data/botNames.json`
+    - ProxyManager pool is awaited before use; safer startup
+    - ChatCommandHandler initialization deferred; uses async `init()`
+    - Clears login timeout on 'login' event; guards against double rejection
+    - Calls `dispose()` for ChatCommandHandler and PathCache on end
+    - Refactored `start()` to avoid async Promise executor (ESLint no-async-promise-executor)
+- ConfigLoader
+    - Ajv validator hoisted to module scope; returns `{ success, config | error }` instead of exiting
+- ChatCommandHandler
+    - Added `init()` to await whitelist load and then wire listeners/commands
+    - Switched most command outputs to a centralized `reply()` that honors `isPrivate`
+    - Console commands don't leak replies to in-game chat
+- WhitelistManager
+    - Asynchronous load with memoization and `async reload()`
+- ProxyManager
+    - Added `loadProxyPool()` for async cached pool loading; improved logging
+    - Integrated MetricsAdapter for structured metrics and logging
+- BotCoordinator
+    - Added MetricsAdapter integration for cleanup metrics and structured logging
+- MetricsAdapter
+    - New utility for counters, gauges, timers, and structured log passthrough
+    - Provides consistent instrumentation across core modules
+- ToolHandler
+    - Replaced 200+ hard-coded block mappings with dynamic mapping from `harvestTools`, `material`, and name heuristics
+    - Explicit overrides for known edge cases (e.g., cobweb → shears, bamboo → sword)
+- DepositUtil
+    - New centralized utility for depositing items to nearest chest
+    - Standardized across MiningBehavior, FarmBehavior, and WoodCuttingBehavior
+    - Smart item filtering by type/category ('ores', 'wood', 'crops', 'all')
+    - Automatic chest finding with configurable search radius
+    - Retry logic for chest opening and navigation
+    - Fallback methods preserved for compatibility
+    - Provides `shouldDeposit()` and diagnostic helpers
+- Resource Behaviors
+    - MiningBehavior: Now uses DepositUtil for 'ores' category
+    - FarmBehavior: Now uses DepositUtil for 'crops' category
+    - WoodCuttingBehavior: Now uses DepositUtil for 'wood' category
+    - All behaviors maintain fallback deposit methods for robustness
+- ChatCommandHandler - Deposit Commands
+    - **!deposit** - Refactored with dual-mode support:
+      - `!deposit [type]` → Automatically uses nearest chest (NEW default)
+      - `!deposit x y z [type]` → Uses specific coordinates (preserves old behavior)
+      - Smart fallback to inventory behavior if DepositUtil unavailable
+    - **!depositall** - Enhanced with priority fallback:
+      - First tries: DepositUtil.depositToNearest('all') for convenience
+      - Falls back to: DepositBehavior.depositAll() for categorized chests
+      - Always works even without configured categorized chests
+    - **!depositnearest** - Direct DepositUtil integration:
+      - Supports custom search radius: `!depositnearest crops 40`
+      - Shows detailed feedback with item counts and types
+      - Default search radius increased to 30 blocks
+    - **!help deposit** - New comprehensive help section:
+      - Documents all deposit modes and examples
+      - Lists supported item types and categories
+      - Explains smart fallback behavior
+- Tooling & Code Quality
+    - `eslint.config.js` (flat config with Node/ES2021 globals), `.prettierrc`, scripts for lint/format/test
+    - ESLint config updated: caughtErrors enforcement with `_`-prefix ignores
+    - Renamed unused catch parameters to `_e`/`_err` across codebase (38 → 15 warnings)
+    - Removed unused imports: `chalk` (FarmBehavior), `Vec3` (LookBehavior)
+    - Underscored intentionally unused locals and args for clarity
+    - `tests/configLoader.test.js` smoke + malformed JSON structured error
+    - All tests passing; zero ESLint errors
+
+#### Notes
+- Code cleanup reduced lint warnings from 79 to 15 (all non-blocking)
+- Behavior of public `!say` preserved to always broadcast
+- MetricsAdapter provides hooks for future telemetry integration
+- DepositUtil ensures consistent deposit behavior across all resource-gathering operations
+- Legacy deposit methods preserved as fallbacks for backward compatibility
+- Deposit commands now default to nearest chest for maximum convenience
+- All deposit commands maintain coordinate-based functionality for advanced use
+
+---
+
 ## Version 2.1.0 - November 8, 2025
 
 ### 🌐 Network & Infrastructure Features

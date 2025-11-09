@@ -40,7 +40,7 @@ export default class PathfindingUtil {
    * @param {boolean} options.aggressive - Use aggressive scaffolding settings
    * @returns {Promise<void>}
    */
-  async goto(pos, timeoutMs = 30000, task = 'generic', range = 1.5, options = {}) {
+  async goto(pos, timeoutMs = 30000, task = 'generic', range = 1, options = {}) {
     if (!pos) throw new Error('goto: pos required');
 
     // Normalize position

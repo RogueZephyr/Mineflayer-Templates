@@ -1,126 +1,66 @@
-# Code Review — Mineflayer-Templates Project
+# Code Review — Mineflayer-Templates
 
-## Summary
-Overall, this project demonstrates **excellent modular design, modern coding style (ESM), and clear documentation**. It is one of the better-structured multi-bot Mineflayer frameworks. The main focus going forward should be on improving **robustness**, **security**, and **data validation**, as well as reducing technical debt in large data mappings (e.g., ToolHandler).
+## Executive Summary
+The project ships with a rich multi-bot feature set and a cohesive architecture, but several blocking and medium-risk issues remain around process lifecycle control, resource cleanup, and long-term maintainability. Most problems stem from synchronous file access in hot paths, missing teardown logic for global listeners, and hard-coded data tables that will quickly diverge from upstream Minecraft versions. Addressing these areas will make the codebase significantly more testable, robust in production, and easier to evolve.
 
----
-
-## 🧠 General Evaluation
-| Category | Rating | Notes |
-|-----------|---------|------|
-| Architecture | ⭐⭐⭐⭐⭐ | Strong modular separation and clear lifecycle management. |
-| Maintainability | ⭐⭐⭐⭐☆ | Code is consistent and well-documented; could benefit from unified async patterns. |
-| Performance | ⭐⭐⭐⭐☆ | Efficient use of caching, but more validation and throttling needed. |
-| Security | ⭐⭐⭐☆☆ | Lacks command permissions and authentication for external interfaces. |
-| Error Handling | ⭐⭐⭐☆☆ | Stable, but missing retries, timeouts, and data schema checks. |
-| Documentation | ⭐⭐⭐⭐⭐ | Excellent internal and external documentation. |
-| Extensibility | ⭐⭐⭐⭐⭐ | New behaviors and systems can be added easily. |
+### Highlights
+- ✅ Strong modular design: behaviours, utilities, and shared coordination are well-separated and already leverage dependency injection hooks.
+- ✅ Security awareness: the whitelist manager and command gating provide a solid baseline for bot access control.
+- ⚠️ Observed gaps: unbounded listeners, blocking I/O inside constructors, and manual data tables that invite drift.
+- 🚀 Opportunity: formalize tooling (lint/tests), cache expensive validators, and adopt dynamic data lookups to keep pace with game updates.
 
 ---
 
-## ⚙️ File-Level Review
-
-| File | Summary | Owner | Severity |
-|------|----------|--------|-----------|
-| **src/core/ConfigLoader.js** | Uses synchronous FS; should switch to async and validate config structure. | Core | ⚠️ Medium |
-| **src/index.js** | Excellent CLI handling and shutdown logic; add non-interactive mode and behavior stop hooks. | Core | ⚠️ Low |
-| **src/core/BotController.js** | Modular and clean; ensure all behaviors can gracefully cancel; handle plugin load errors non-fatally. | Core | ⚠️ Medium |
-| **src/core/BotCoordinator.js** | Strong design; needs mutex or async-safe queue for shared state; review truncated line `Mat...`. | Core | ⚠️ High |
-| **src/utils/ChatCommandHandler.js** | Powerful, but needs whitelist enforcement, rate limiting, and `!help` registry. | Utils | ⚠️ High |
-| **src/utils/PathfindingUtil.js** | Great cache usage; ensure goal clearing after all path attempts and add settle delay. | Utils | ⚠️ Medium |
-| **src/utils/PathCache.js** | Smart design; include world/dimension in key and decay invalid paths. | Utils | ⚠️ Low |
-| **src/utils/ToolHandler.js** | Hardcoded block lists are brittle; use `minecraft-data` dynamic lookups. | Utils | ⚠️ Medium |
-| **src/utils/SaveChestLocation.js** | Clean and safe; consider merging config + data versions and schema validate JSON. | Utils | ⚠️ Low |
-| **src/state/AreaRegistry.js** | Excellent; add validation, `list()` and `remove()` functions, and coordinate normalization. | State | ⚠️ Low |
-| **data/*.json** | Runtime state persists properly; add schema validation (Ajv) and auto-migration system. | Data | ⚠️ Medium |
+## Key Findings
+| Severity | Area | Issue | Recommendation |
+| --- | --- | --- | --- |
+| **High** | Lifecycle management | `ChatCommandHandler` and `PathCache` attach listeners (`chat`, `blockUpdate`, readline) but never remove them on bot shutdown, so repeated reconnects leak handlers and duplicate events.【F:src/utils/ChatCommandHandler.js†L160-L198】【F:src/utils/PathCache.js†L236-L249】 | Add `dispose()`/`teardown()` hooks that `BotController` calls from its `onEnd`/`gracefulShutdown`, unregistering Mineflayer and readline listeners.
+| **High** | CLI resilience | Multiple CLI flows exit the process directly (`process.exit`) from library code (config loader, server registry operations), preventing reuse inside tests or embedding scenarios.【F:src/core/ConfigLoader.js†L41-L44】【F:src/index.js†L52-L74】 | Replace hard exits with thrown errors and let `index.js` be the sole owner of exit codes; surface structured errors for consumers.
+| **Medium** | Startup performance | `BotController.loadUsernameList()` and `WhitelistManager.loadWhitelist()` perform synchronous disk reads during construction, blocking the event loop when many bots start at once.【F:src/core/BotController.js†L35-L52】【F:src/utils/WhitelistManager.js†L15-L24】 | Switch to async `fs/promises`, load once at startup, and reuse cached state across controllers.
+| **Medium** | Validation cost | `ConfigLoader` instantiates Ajv and recompiles the schema every time a config is loaded, and hard exits on validation failure, making hot reloads costly and tests brittle.【F:src/core/ConfigLoader.js†L19-L44】 | Hoist Ajv and compiled schema to module scope, return structured validation errors, and allow callers to decide how to handle invalid configs.
+| **Medium** | Retry flow | The login timeout in `BotController.start` never clears its `setTimeout`, so a resolved promise still fires a rejection later, surfacing as an unhandled rejection in some runtimes.【F:src/core/BotController.js†L170-L209】 | Store the timeout handle and clear it once the bot logs in or errors.
+| **Medium** | Command UX | Several chat command handlers answer in global chat even when triggered via private whispers, exposing command responses to public chat.【F:src/utils/ChatCommandHandler.js†L624-L637】 | Route responses through `reply()` to respect private contexts and reduce spam risks.
+| **Medium** | Data maintainability | `ToolHandler` hard-codes long block lists, which will diverge whenever Mojang adds or renames blocks.【F:src/utils/ToolHandler.js†L18-L187】 | Generate mappings from `minecraft-data` (block diggable tool metadata) at runtime or during initialization.
+| **Low** | Global state | `ChatCommandHandler` uses a static `_consoleInitialized` flag shared across bots, preventing console control when multiple coordinators run in the same process (e.g., unit tests).【F:src/utils/ChatCommandHandler.js†L73-L142】 | Scope console listeners per process or expose an opt-in flag so tests can instantiate handlers without hijacking stdin.
+| **Low** | Observability | `ProxyManager` logs detailed proxy metadata but lacks metrics or structured logging, making production triage harder.【F:src/utils/ProxyManager.js†L120-L235】 | Emit structured events (e.g., via pino or Winston) and expose counters for pool utilization.
 
 ---
 
-## 🚨 Issues and Fixes
-
-### 1. **Concurrency / Data Safety**
-**Problem:** Coordinator and path cache Maps may be modified concurrently by async events.  
-**Fix:** Use an `async-mutex` or implement queue-based serialization.
-
-### 2. **Command Security**
-**Problem:** Any player can issue `!` commands.  
-**Fix:** Add whitelist enforcement via `config.json` and integrate with `WhitelistManager`.
-
-### 3. **Timeouts and Retries**
-**Problem:** Long-running operations like `goto` or `mine` can hang indefinitely.  
-**Fix:** Add timeout wrappers and retry logic with `Promise.race()`.
-
-### 4. **Pathfinder State Cleanup**
-**Problem:** Some goals are not cleared after successful or failed paths.  
-**Fix:** Always call `coordinator.clearPathfindingGoal()` in finally blocks.
-
-### 5. **Schema Validation**
-**Problem:** JSON registries lack structure checks.  
-**Fix:** Introduce Ajv for config and runtime files.
-
-### 6. **Hardcoded Block Mappings**
-**Problem:** `ToolHandler` block arrays will drift over versions.  
-**Fix:** Dynamically build mappings from `minecraft-data`.
-
-### 7. **Consistency in FS Access**
-**Problem:** Mixed use of `fs` and `fs/promises`.  
-**Fix:** Convert all to async and use awaitable patterns.
-
-### 8. **Graceful Shutdown Enhancements**
-**Problem:** Long tasks may prevent shutdown.  
-**Fix:** Add cancellation signals for all behaviors.
-
-### 9. **Logging Standardization**
-**Problem:** Mixed use of `console`, `chalk`, and `Logger`.  
-**Fix:** Route all logs through `Logger` with timestamp and level tags.
-
-### 10. **Fabric Mod Authentication (Future)**
-**Problem:** No auth layer for packet channel.  
-**Fix:** Add nonce/handshake when connecting from the client mod.
+## Optimization Opportunities
+1. **Async data loading** — Cache the results of `botNames.json`, `whitelist.json`, and proxy pool reads using async I/O so spawning N bots scales linearly instead of blocking on synchronous reads.【F:src/core/BotController.js†L35-L52】【F:src/utils/WhitelistManager.js†L15-L24】【F:src/utils/ProxyManager.js†L28-L45】
+2. **Schema reuse** — Hoist and reuse Ajv validators for configs and runtime data to avoid repeated compilation and make it easier to extend schemas for other JSON stores.【F:src/core/ConfigLoader.js†L19-L36】
+3. **Path cache hygiene** — Provide TTL-based cleanup and listener teardown so cached paths don’t accumulate across worlds; consider persisting hit/miss stats for diagnostics.【F:src/utils/PathCache.js†L60-L123】【F:src/utils/PathCache.js†L236-L249】
+4. **Command throttling** — Extend the simple per-user rate limiter with exponential backoff or bucket-based throttling to guard against targeted spam on busy servers.【F:src/utils/ChatCommandHandler.js†L29-L155】
+5. **Login pipeline** — Wrap the Mineflayer login retries in a promise queue (e.g., p-limit) when spawning many bots to avoid simultaneous proxy requests overwhelming the upstream server.【F:src/index.js†L129-L166】【F:src/core/BotController.js†L92-L209】
 
 ---
 
-## 🔍 Recommendations
-
-1. **Add config.example.json** with all keys and comments.
-2. **Command permissions** with per-user ACL.
-3. **Global timeouts** for high-cost operations.
-4. **Unified logging** (consider JSON log option for the Bot Manager App).
-5. **Schema-aware persistence** and migration tooling.
-6. **Introduce simple unit tests** for `ChatCommandHandler`, `BotCoordinator`, and `PathCache`.
-7. **Optional metrics endpoint** to surface stats from bots.
-
----
-
-## 🧩 External Integrations to Consider
-
-| Library | Purpose | Integration Benefit |
-|----------|----------|--------------------|
-| `mineflayer-collectblock` | Efficient block/item collection | Replaces manual loops for mining & farming |
-| `mineflayer-tool` | Automatic tool switching | Simplifies ToolHandler maintenance |
-| `mineflayer-auto-eat` | Hunger management | Optimizes EatBehavior fallback |
-| `mineflayer-armor-manager` | Armor logic | Prepares for combat behaviors |
-| `Ajv` | JSON schema validation | Prevents corrupt configs and state files |
-| `async-mutex` | Concurrency safety | Avoids race conditions in BotCoordinator |
+## Suggested Add-ons & Tooling
+| Category | Recommendation | Benefit |
+| --- | --- | --- |
+| Module | `mineflayer-collectblock` | Replace custom item collection loops and lean on a well-tested gatherer (less maintenance). |
+| Module | `mineflayer-tool` | Provides auto tool selection so `ToolHandler` can focus on orchestration rather than block tables. |
+| Module | `mineflayer-armor-manager` | Ready-made armor and combat support to complement existing farming/mining behaviors. |
+| Module | `prom-client` + `/metrics` endpoint | Export coordinator statistics for Grafana/Prometheus, enabling live monitoring of multi-bot fleets.【F:src/core/BotCoordinator.js†L10-L116】【F:src/core/BotCoordinator.js†L340-L412】 |
+| Tooling | ESLint + Prettier | Enforce consistent style (e.g., indentation drift near ItemCollector setup) and catch unused imports early.【F:src/core/BotController.js†L214-L237】 |
+| Tooling | Vitest/Jest | Unit-test permission gating (`WhitelistManager`), command parsing, and coordinator claim logic. |
+| Tooling | TypeScript (incremental) | Strong typing around config/behavior contracts to avoid runtime key typos and improve editor support. |
+| Tooling | `p-limit` / `bullmq` | Queue and schedule long-running behavior tasks to avoid starvation when many commands arrive simultaneously.【F:src/utils/ChatCommandHandler.js†L416-L483】 |
 
 ---
 
-## ✅ Next Steps Checklist
-- [ ] Add async FS to `ConfigLoader` and unify access patterns.
-- [ ] Add timeouts and retries in all async behavior loops.
-- [ ] Introduce command whitelist and ACL system.
-- [ ] Refactor ToolHandler to dynamic data model.
-- [ ] Add Ajv schema validation for all runtime JSONs.
-- [ ] Centralize all logging under `Logger` class.
-- [ ] Add unit tests for coordination and caching modules.
-- [ ] Verify truncated code in `BotCoordinator` (`Mat...`) and complete it.
-- [ ] Introduce CLI options (non-interactive bot spawn).
-- [ ] Implement cancel hooks for behaviors on shutdown.
+## Quick Wins Checklist
+- [ ] Extract listener teardown hooks and call them from `BotController.onEnd()`.
+- [ ] Replace synchronous disk reads with async equivalents and memoize shared data.
+- [ ] Cache Ajv validators and surface structured validation errors instead of exiting.
+- [ ] Clear login timeout handles once the bot authenticates.
+- [ ] Rework `ToolHandler` to derive mappings from `minecraft-data` metadata.
+- [ ] Introduce lint/test scripts in `package.json` for CI visibility.
+- [ ] Normalize command replies to respect private/public context.
+- [ ] Add optional metrics/logging adapters for coordinator and proxy subsystems.
 
 ---
 
-**Reviewer:** ChatGPT (GPT-5)  
-**Date:** 2025-11-07  
-**Project Owner:** RogueZ3phyr  
-**Version Reviewed:** v1.0.2
-
+**Reviewer:** ChatGPT (gpt-5-codex)  
+**Date:** 2025-01-15  
+**Repository Snapshot:** `mineflayer_basicbot@1.0.3`

@@ -1,4 +1,4 @@
-import chalk from 'chalk';
+// Removed unused chalk import
 import { Vec3 } from 'vec3';
 import pkg from 'mineflayer-pathfinder';
 import mcDataFactory from 'minecraft-data';
@@ -225,7 +225,7 @@ export default class FarmBehavior {
           try {
             // ensure seed is equipped (might be in off-hand already)
             const equippedHand = this.bot.heldItem;
-            const equippedOffHand = this.bot.inventory.slots[45]; // off-hand slot
+            const _equippedOffHand = this.bot.inventory.slots[45]; // off-hand slot (unused placeholder)
             
             const isPlantableEquipped = equippedHand && (
               equippedHand.name.endsWith('_seeds') || 
@@ -262,7 +262,7 @@ export default class FarmBehavior {
 
   // sow single block: go to farmland block, equip seeds and place
   async _sowAt(farmlandPos) {
-    const above = new Vec3(farmlandPos.x, farmlandPos.y + 1, farmlandPos.z);
+  const _above = new Vec3(farmlandPos.x, farmlandPos.y + 1, farmlandPos.z); // unused placeholder
     try {
       await this._gotoBlock(new Vec3(farmlandPos.x + 0.5, farmlandPos.y, farmlandPos.z + 0.5), 20000);
     } catch (e) {
@@ -679,11 +679,15 @@ export default class FarmBehavior {
         }
 
         // proactive deposit if inventory large or if we did any work and want to keep inventory tidy
-        if ((this._shouldDeposit() || didWork) && this.bot.depositBehavior && typeof this.bot.depositBehavior.depositAll === 'function') {
+        if ((this._shouldDeposit() || didWork)) {
           try {
-            await this.bot.depositBehavior.depositAll();
+            if (this.bot.depositUtil) {
+              await this.bot.depositUtil.depositToNearest('crops', 20);
+            } else if (this.bot.depositBehavior && typeof this.bot.depositBehavior.depositAll === 'function') {
+              await this.bot.depositBehavior.depositAll();
+            }
           } catch (e) {
-            this._emitDebug('startFarming: depositAll failed', e.message || e);
+            this._emitDebug('startFarming: deposit failed', e.message || e);
           }
         }
 
@@ -706,8 +710,8 @@ export default class FarmBehavior {
           await new Promise(r => setTimeout(r, 500));
         }
       }
-    } catch (err) {
-      this.logger.error(`[Farm][${this.bot.username}] Error while farming: ${err.message || err}`);
+  } catch (_err) {
+    this.logger.error(`[Farm][${this.bot.username}] Error while farming: ${_err.message || _err}`);
     } finally {
       // return hoe to tools chest when done
       await this.returnHoeToChest();
@@ -726,7 +730,7 @@ export default class FarmBehavior {
       });
       const total = cropItems.reduce((s, it) => s + (it.count || 0), 0);
       return total > 50;
-    } catch (e) {
+  } catch (_e) {
       return false;
     }
   }
