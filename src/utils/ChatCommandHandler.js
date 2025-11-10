@@ -12,6 +12,8 @@ import AreaRegistry from '../state/AreaRegistry.js';
 import WhitelistManager from './WhitelistManager.js';
 
 const cmdPrefix = '!';
+// Sentinel name used by dashboard runtime to indicate a synthetic master command
+const DASHBOARD_CONSOLE_SENDER = 'Console';
 
 export default class ChatCommandHandler {
   constructor(bot, master, behaviors = {}, config = {}) {
@@ -24,7 +26,9 @@ export default class ChatCommandHandler {
     // Flag indicating a command originated from the local console.
     // While true, all outbound chat/whisper/reply traffic is suppressed
     // from the Minecraft server and logged to console instead.
-    this._consoleCommandActive = false;
+  this._consoleCommandActive = false;
+  this._initialized = false;
+  this._initPromise = null;
     
     // Rate limiting per user (prevents spam/abuse)
     this.rateLimits = new Map(); // username -> lastCommandTime
@@ -74,17 +78,41 @@ export default class ChatCommandHandler {
    * Asynchronous initialization sequence to load whitelist and set up listeners/commands.
    */
   async init() {
-    try {
-      await this.whitelist.loadWhitelist();
-      this.logger.info(`[ChatCommandHandler] Whitelist loaded (${Object.keys(this.whitelist.whitelist).length} entries)`);
-  } catch (_e) {
-      this.logger.warn('[ChatCommandHandler] Whitelist async load failed, proceeding with empty list');
-    }
-    this.registerDefaultCommands();
-    this.initListeners();
-    this.initConsoleInput();
-    this.logger.info('[ChatCommandHandler] Initialization complete');
-    return this;
+    if (this._initialized) return this;
+    if (this._initPromise) return this._initPromise;
+
+    this._initPromise = (async () => {
+      try {
+        try {
+          await this.whitelist.loadWhitelist();
+          this.logger.info(`[ChatCommandHandler] Whitelist loaded (${Object.keys(this.whitelist.whitelist).length} entries)`);
+        } catch (_e) {
+          this.logger.warn('[ChatCommandHandler] Whitelist async load failed, proceeding with empty list');
+        }
+        this.registerDefaultCommands();
+        this.initListeners();
+        this.initConsoleInput();
+        this._initialized = true;
+        this.logger.info('[ChatCommandHandler] Initialization complete');
+        return this;
+      } finally {
+        // Clear promise but keep initialized flag
+        this._initPromise = null;
+      }
+    })();
+
+    // Expose a readiness promise for external awaiters (e.g., runtime)
+    try { this.bot.chatCommandHandlerReady = this._initPromise; } catch (_) {}
+
+    return this._initPromise;
+  }
+
+  isReady() { return this._initialized; }
+
+  async waitUntilReady() {
+    if (this._initialized) return;
+    if (this._initPromise) { await this._initPromise; return; }
+    await this.init();
   }
   
   /**
@@ -109,6 +137,10 @@ export default class ChatCommandHandler {
     // Clear rate limit tracking
     this.rateLimits.clear();
     
+    // Reset init flags
+    this._initialized = false;
+    this._initPromise = null;
+
     this.logger.info('[ChatCommandHandler] Disposed');
   }
 
@@ -116,6 +148,14 @@ export default class ChatCommandHandler {
   // Console Input Handler
   // ------------------------------
   initConsoleInput() {
+    // In Electron dashboard runtime, reserve stdin for IPC
+    if (process.env.DASHBOARD_MODE === 'electron') {
+      if (!this.constructor._consoleDashboardNotice) {
+        this.logger.info('[Console] Dashboard mode detected; skipping local stdin command handler');
+        this.constructor._consoleDashboardNotice = true;
+      }
+      return;
+    }
     // Skip if already initialized (prevent duplicate listeners)
     if (this.constructor._consoleInitialized) return;
     this.constructor._consoleInitialized = true;
@@ -456,83 +496,106 @@ export default class ChatCommandHandler {
         remainingArgs: args.slice(1) // Remove bot name from args
       };
     }
+    
 
     // No bot name specified, command is for all bots
     return { isForThisBot: true, remainingArgs: args };
   }
+  
 
   async handleMessage(username, message, isPrivate) {
-    if (username === this.bot.username) return;
+    // Ensure handler is ready; allow runtime to call immediately after spawn
+    if (!this._initialized) {
+      try { await this.waitUntilReady(); } catch (err) { this.logger.error(`[ChatCommandHandler] Command ignored; init failed: ${err?.message || err}`); return; }
+      if (!this._initialized) { this.logger.warn('[ChatCommandHandler] Command ignored; handler not ready'); return; }
+    }
 
-    // Rate limiting check
-    if (this.isRateLimited(username)) {
-      this.logger.info(`[${this.bot.username}] Rate limited: ${username}`);
+    if (username === this.bot.username) return;
+    if (!message || typeof message !== 'string') return;
+
+    const isDashboardConsole = username === DASHBOARD_CONSOLE_SENDER;
+    const effectiveUsername = isDashboardConsole ? this.master : username;
+    const effectivePrivate = isDashboardConsole ? true : isPrivate;
+
+    // Rate limiting only for real players, not dashboard-originated commands
+    if (!isDashboardConsole && this.isRateLimited(effectiveUsername)) {
+      this.logger.info(`[${this.bot.username}] Rate limited: ${effectiveUsername}`);
       return;
     }
 
-    // For whispers, don't require the ! prefix (optional)
-    // For public chat, require the ! prefix
-    if (!isPrivate && !message.startsWith(cmdPrefix)) return;
+    // Require prefix for public chat from players; dashboard private commands may omit it.
+    if (!effectivePrivate && !message.startsWith(cmdPrefix)) return;
 
-    // Remove prefix if present, otherwise parse as-is for whispers
-    const cleanMessage = message.startsWith(cmdPrefix) 
-      ? message.replace(cmdPrefix, '').trim() 
+    // Strip prefix if present
+    const cleanMessage = message.startsWith(cmdPrefix)
+      ? message.slice(cmdPrefix.length).trim()
       : message.trim();
-    
+    if (!cleanMessage) return;
+
     const parts = cleanMessage.split(/\s+/);
-    const commandName = parts.shift().toLowerCase();
+    const commandName = (parts.shift() || '').toLowerCase();
+    if (!commandName) return;
     const args = parts;
 
-  if (this.commands.has(commandName)) {
-      try {
-    // Ensure whitelist is loaded before permission checks
-    try { await this.whitelist.loadWhitelist(); } catch (_) { /* ignore, default empty */ }
-        // Check if command is targeted at this bot
-        const { isForThisBot, remainingArgs } = this.parseTargetedCommand(args);
-        
-        // Debug logging
-        this.logger.info(`[${this.bot.username}] Command '${commandName}' - isForThisBot: ${isForThisBot}, args: [${args.join(', ')}], remainingArgs: [${remainingArgs.join(', ')}]`);
-        
-        if (!isForThisBot) {
-          // Command is for another bot, ignore it silently
-          this.logger.info(`[${this.bot.username}] Command not for this bot, ignoring`);
-          return;
-        }
+    // Ensure whitelist loaded before checks (non-blocking catch)
+    try { await this.whitelist.loadWhitelist(); } catch (_) {}
 
-        // Check whitelist permissions
-        if (!this.whitelist.canCommandBot(username, this.bot.username)) {
-          // Player not allowed to command this bot - ignore silently
-          this.logger.info(`[${this.bot.username}] ${username} not whitelisted for this bot`);
-          return;
-        }
-
-        if (!this.whitelist.canUseCommand(username, this.bot.username, commandName)) {
-          // Player not allowed to use this command
-          this.reply(username, `You don't have permission to use '${commandName}'`, isPrivate);
-          this.logger.info(`[${this.bot.username}] ${username} denied command: ${commandName}`);
-          return;
-        }
-
-        // Log command execution with bot name
-        const targetInfo = (args.length > 0 && remainingArgs.length !== args.length) 
-          ? ` (targeted at ${this.bot.username})`
-          : '';
-        this.logger.info(`[${this.bot.username}] ${username} executing: ${commandName}${targetInfo}`);
-
-        const handler = this.commands.get(commandName);
-        // allow async handlers, pass remaining args after bot name filtering
-        const res = handler.call(this, username, remainingArgs, isPrivate);
-        // Mark last command time for background task deferral logic
-        try { this.bot.lastCommandAt = Date.now(); } catch (_) {}
-        if (res instanceof Promise) await res.catch(err => this.logger.error(`[Cmd:${commandName}] ${err.message || err}`));
-      } catch (err) {
-        this.logger.error(`[Cmd:${commandName}] Handler threw: ${err.message || err}`);
+    if (!this.commands.has(commandName)) {
+      // Unknown command: only inform whitelisted real players (not dashboard synthetic sender)
+      if (!isDashboardConsole && this.whitelist.isWhitelisted(effectiveUsername)) {
+        this.reply(effectiveUsername, `Unknown command: ${commandName}`, effectivePrivate);
       }
-    } else {
-      // unknown command - only reply if whitelisted
-      try { await this.whitelist.loadWhitelist(); } catch (_) {}
-      if (this.whitelist.isWhitelisted(username)) {
-        this.reply(username, `Unknown command: ${commandName}`, isPrivate);
+      return;
+    }
+
+    // Targeting (first arg can be bot name)
+    const { isForThisBot, remainingArgs } = this.parseTargetedCommand(args);
+    this.logger.info(`[${this.bot.username}] Command '${commandName}' actor='${effectiveUsername}' isForThisBot=${isForThisBot} args=[${args.join(', ')}] rem=[${remainingArgs.join(', ')}]`);
+    if (!isForThisBot) return;
+
+    // Whitelist checks (skip for dashboard/master synthetic unless master is set incorrectly)
+    if (!isDashboardConsole) {
+      if (!this.whitelist.canCommandBot(effectiveUsername, this.bot.username)) {
+        this.logger.info(`[${this.bot.username}] ${effectiveUsername} not whitelisted for this bot`);
+        return;
+      }
+      if (!this.whitelist.canUseCommand(effectiveUsername, this.bot.username, commandName)) {
+        this.reply(effectiveUsername, `You don't have permission to use '${commandName}'`, effectivePrivate);
+        this.logger.info(`[${this.bot.username}] ${effectiveUsername} denied command: ${commandName}`);
+        return;
+      }
+    }
+
+    // Log execution
+    const targetInfo = (args.length > 0 && remainingArgs.length !== args.length) ? ` (targeted)` : '';
+    this.logger.info(`[${this.bot.username}] ${effectiveUsername}${isDashboardConsole ? ' [dashboard]' : ''} executing: ${commandName}${targetInfo}`);
+
+    const handler = this.commands.get(commandName);
+
+    // Dashboard console emulation: temporarily redirect bot.chat/whisper so command output is logged not sent publicly
+    let originalChat = null;
+    let originalWhisper = null;
+    if (isDashboardConsole) {
+      originalChat = this.bot.chat ? this.bot.chat.bind(this.bot) : null;
+      originalWhisper = this.bot.whisper ? this.bot.whisper.bind(this.bot) : null;
+      this._consoleCommandActive = true;
+      this._originalBotChat = originalChat;
+      if (originalChat) this.bot.chat = (msg) => { if (msg) this.logger.info(`[Console Reply] ${msg}`); };
+      if (originalWhisper) this.bot.whisper = (target, msg) => { if (msg) this.logger.info(`[Console Reply->${target}] ${msg}`); };
+    }
+
+    try {
+      const res = handler.call(this, effectiveUsername, remainingArgs, effectivePrivate);
+      try { this.bot.lastCommandAt = Date.now(); } catch (_) {}
+      if (res instanceof Promise) await res.catch(err => this.logger.error(`[Cmd:${commandName}] ${err.message || err}`));
+    } catch (err) {
+      this.logger.error(`[Cmd:${commandName}] Handler threw: ${err.message || err}`);
+    } finally {
+      if (isDashboardConsole) {
+        this._consoleCommandActive = false;
+        this._originalBotChat = null;
+        if (originalChat) this.bot.chat = originalChat;
+        if (originalWhisper) this.bot.whisper = originalWhisper;
       }
     }
   }

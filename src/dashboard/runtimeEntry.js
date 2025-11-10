@@ -32,38 +32,41 @@ function emit(type, payload) {
 // Setup STDIN listener for commands from dashboard
 const rl = readline.createInterface({
   input: process.stdin,
-  output: process.stdout,
-  terminal: false
+  crlfDelay: Infinity,
 });
 
 // Debug: confirm readline attached
 console.error('[Runtime] stdin readline attached');
 
-// Raw stdin probe - attempt to parse incoming chunks and emit a structured inbox event immediately.
-// This helps ensure the main renderer can observe stdin activity even if readline misses a line.
-process.stdin.on('data', (chunk) => {
-  try {
-    const s = chunk.toString();
-    const trimmed = s.trim();
+// Optional raw stdin probe for debugging; disabled by default to avoid interfering with readline
+if (process.env.DASH_DEBUG_STDIN === '1') {
+  process.stdin.on('data', (chunk) => {
     try {
-      const parsed = JSON.parse(trimmed);
-      // Emit as structured stdout event so main will forward it
-      console.log(JSON.stringify({ type: 'inbox', payload: parsed, timestamp: new Date().toISOString() }));
-    } catch (_parseErr) {
-      // Not valid JSON as a whole chunk; forward as raw payload for debugging
-      console.log(JSON.stringify({ type: 'inbox', payload: { raw: s.replace(/\n/g, '\\n') }, timestamp: new Date().toISOString() }));
+      const s = chunk.toString();
+      const trimmed = s.trim();
+      try {
+        const parsed = JSON.parse(trimmed);
+        console.log(JSON.stringify({ type: 'inbox', payload: parsed, timestamp: new Date().toISOString() }));
+      } catch (_parseErr) {
+        console.log(JSON.stringify({ type: 'inbox', payload: { raw: s.replace(/\n/g, '\\n') }, timestamp: new Date().toISOString() }));
+      }
+    } catch (_e) {
+      // Best effort - don't crash the runtime on logging
     }
-  } catch (_e) {
-    // Best effort - don't crash the runtime on logging
-  }
-});
+  });
+}
 
 rl.on('line', async (line) => {
   try {
-    // Debug: show the raw line received
-    console.error('[Runtime-RAW-LINE]', line.replace(/\n/g, '\\n'));
-    const message = JSON.parse(line);
-    console.error('[Runtime] Parsed stdin JSON:', message && message.type ? message.type : '(no-type)');
+    emit('log', { level: 'debug', message: `[Runtime] stdin line received (${line.length} bytes)` });
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch (e) {
+      emit('log', { level: 'warn', message: `[Runtime] Failed to parse JSON line: ${e.message}` });
+      return;
+    }
+    emit('log', { level: 'debug', message: `[Runtime] Parsed message type: ${message.type || '(none)'}` });
     // Emit structured inbox event so the dashboard can see what arrived on stdin
     try {
       emit('inbox', message);
@@ -74,21 +77,83 @@ rl.on('line', async (line) => {
     }
     
     if (message.type === 'command:execute') {
-      const { botId, command } = message.payload;
-      
+      const { botId, command } = message.payload || {};
+      const normalizedCmd = String(command || '').trim();
+      if (!normalizedCmd) return;
+      // Prefer using the bot's configured master identity and private context
+      // so whitelist permits the action and we don't require public '!' prefix.
+      const execFor = async (controller) => {
+        try {
+          if (!controller || !controller.bot) {
+            emit('log', { level: 'warn', message: '[Runtime] No bot/controller available for command' });
+            emit('commandResult', {
+              botId: controller?.username || '(unknown)',
+              command: normalizedCmd,
+              success: false,
+              error: 'no_controller',
+            });
+            return;
+          }
+          // Wait until chatCommandHandler exists and commands are registered (size > 0)
+          const start = Date.now();
+          while ((!controller.bot.chatCommandHandler || (controller.bot.chatCommandHandler.commands && controller.bot.chatCommandHandler.commands.size === 0)) && (Date.now() - start) < 4000) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+          const h = controller.bot.chatCommandHandler;
+          if (!h || (h.commands && h.commands.size === 0)) {
+            emit('log', { level: 'warn', message: '[Runtime] chatCommandHandler not ready (no commands registered); try again after a moment' });
+            emit('commandResult', {
+              botId: controller.username,
+              command: normalizedCmd,
+              success: false,
+              error: 'handler_not_ready',
+            });
+            return;
+          }
+          // Use dashboard sentinel so handler routes as master privately and logs [Console Reply]
+          const username = 'Console';
+          emit('log', { level: 'debug', message: `[Runtime] Dispatching dashboard command to ${controller.username}: ${normalizedCmd}` });
+          const t0 = Date.now();
+          let success = true;
+          let errorMsg = null;
+          try {
+            await h.handleMessage(username, normalizedCmd, true);
+          } catch (e) {
+            success = false;
+            errorMsg = e?.message || String(e);
+          }
+          const durationMs = Date.now() - t0;
+          emit('log', { level: 'debug', message: `[Runtime] Completed dashboard command on ${controller.username}: ${normalizedCmd} (${durationMs}ms, ${success ? 'ok' : 'fail'})` });
+          emit('commandResult', {
+            botId: controller.username,
+            command: normalizedCmd,
+            success,
+            durationMs,
+            error: errorMsg || undefined,
+          });
+        } catch (e) {
+          emit('log', { level: 'error', message: `[Runtime] Command execution error: ${e.message || e}` });
+          try {
+            if (controller && controller.username) {
+              emit('commandResult', {
+                botId: controller.username,
+                command: normalizedCmd,
+                success: false,
+                error: e?.message || String(e),
+              });
+            }
+          } catch (_) {}
+        }
+      };
+
       // Execute command on specific bot or all bots
       if (botId) {
         const controller = botControllers.get(botId);
-        if (controller && controller.bot && controller.bot.chatCommandHandler) {
-          // Execute as console command
-          await controller.bot.chatCommandHandler.handleMessage('Console', command, false);
-        }
+        await execFor(controller);
       } else {
         // Execute on all bots
         for (const controller of botControllers.values()) {
-          if (controller.bot && controller.bot.chatCommandHandler) {
-            await controller.bot.chatCommandHandler.handleMessage('Console', command, false);
-          }
+          await execFor(controller);
         }
       }
   } else if (message.type === 'command:list') {
@@ -118,9 +183,7 @@ rl.on('line', async (line) => {
       await removeBot(botId);
     }
   } catch (err) {
-    // If parsing failed, emit and also log raw line to stderr for tracing
-    console.error('[Runtime-JSON-PARSE-ERR]', err && err.message, 'raw:', line.replace(/\n/g, '\\n'));
-    emit('error', { message: err.message || String(err) });
+    emit('log', { level: 'error', message: `[Runtime] rl.on(line) handler error: ${err.message || err}` });
   }
 });
 

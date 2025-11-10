@@ -3,7 +3,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 try {
-  console.log('[Preload] Initializing preload bridge (CJS)...');
 
   contextBridge.exposeInMainWorld('dashboardAPI', {
     sendCommand: (payload) => ipcRenderer.send('command:execute', payload),
@@ -34,6 +33,11 @@ try {
       ipcRenderer.on('runtime:commandMeta', handler);
       return () => ipcRenderer.removeListener('runtime:commandMeta', handler);
     }
+    , onCommandResult: (callback) => {
+      const handler = (_e, result) => callback(result);
+      ipcRenderer.on('runtime:commandResult', handler);
+      return () => ipcRenderer.removeListener('runtime:commandResult', handler);
+    }
     , onInbox: (callback) => {
       const handler = (_e, data) => callback(data);
       ipcRenderer.on('runtime:inbox', handler);
@@ -43,7 +47,6 @@ try {
     , removeBot: (botId) => ipcRenderer.send('bot:remove', { botId })
   });
 
-  console.log('[Preload] Bridge exposed successfully');
-} catch (err) {
-  console.error('[Preload] Failed to initialize:', err);
+} catch {
+  /* Swallow preload init errors to avoid crashing Electron */
 }

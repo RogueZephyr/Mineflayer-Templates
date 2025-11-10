@@ -65,8 +65,9 @@ export class BotController {
     this.bot = null;
     this.mcData = null;
   this.logger = new Logger({ botId: this.username || undefined });
-    this.behaviors = {};
-    this.master = 'RogueZ3phyr';
+  this.behaviors = {};
+  // Master player: prefer config, fallback to default
+  this.master = (this.config && this.config.master) ? this.config.master : 'RogueZ3phyr';
     this.hungerCheckInterval = null;
     this.coordinator = coordinator; // Shared coordinator for multi-bot sync
     this.instanceId = instanceId; // Bot instance ID for proxy rotation
@@ -476,6 +477,10 @@ export class BotController {
     this.logger.info('HomeBehavior initialized successfully!');
 
     this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors, this.config);
+    // Expose for external controllers (dashboard runtime) to invoke commands directly
+    // This is required because the Electron runtime calls controller.bot.chatCommandHandler.handleMessage(...)
+    // when relaying commands from the dashboard UI.
+    this.bot.chatCommandHandler = this.behaviors.chatCommands;
     // Initialize asynchronously but do not block spawn completion
     (async () => {
       try {

@@ -139,6 +139,19 @@ The renderer supports hot module reload. Changes to React components will update
 - Ensure command starts with `!` (e.g., `!say hello` not `say hello`)
 - Check that ChatCommandHandler is initialized
 - Look for error logs in the dashboard
+ - If running via Electron and commands appear in the dashboard log as `INBOX` events but have no effect in-game, ensure:
+     1. `BotController` sets `bot.chatCommandHandler` (added in fix after v1.0.3)
+     2. `ChatCommandHandler.initConsoleInput()` is skipped in dashboard mode (env var `DASHBOARD_MODE=electron`) so stdin isn't consumed twice
+     3. The runtime process shows `[Runtime] Parsed stdin JSON: command:execute` in its stderr/devtools console
+     4. Your command includes the leading `!` unless you target a whisper-only context.
+
+### Verifying command path end-to-end
+1. Renderer sends: `window.dashboardAPI.sendCommand({ command: '!ping' })`
+2. Main process logs: `[Main] IPC command:execute received...` and writes JSON to runtime stdin
+3. Runtime stderr shows: `[Runtime-RAW-LINE] {"type":"command:execute"...}` and emits an `inbox` event
+4. Dashboard logs a debug line: `INBOX: {"type":"command:execute"...}`
+5. Bot logs something like: `[BotName] Console executing: ping` and responds `Pong!`
+If flow breaks at a step, inspect that layer (renderer, main, runtime, bot).
 
 ## Next Steps
 

@@ -43,6 +43,17 @@ export default function App() {
       updateBots(bots);
     });
 
+    // Command execution results from runtime
+    const unsubCommandResult = window.dashboardAPI.onCommandResult((result) => {
+      const { botId, command, success, durationMs, error } = result || {};
+      const level = success ? 'success' : 'error';
+      const dur = typeof durationMs === 'number' ? `${durationMs}ms` : 'n/a';
+      const msg = success
+        ? `Command '${command}' on ${botId} succeeded (${dur})`
+        : `Command '${command}' on ${botId} failed (${dur})${error ? ` - ${error}` : ''}`;
+      appendLog({ botId, level, message: msg, timestamp: new Date().toISOString() });
+    });
+
     const unsubError = window.dashboardAPI.onError((error) => {
       console.error('[Dashboard] Runtime error:', error);
       appendLog({
@@ -58,6 +69,7 @@ export default function App() {
       unsubBots();
       unsubError();
       unsubInbox();
+      unsubCommandResult();
     };
   }, [setReady, updateBots, appendLog, setItemNames]);
 
