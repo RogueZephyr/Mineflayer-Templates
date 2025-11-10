@@ -2,6 +2,12 @@
 import { Vec3 } from 'vec3';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Get absolute path for this module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * MiningBehavior - Modular mining with multiple strategies
@@ -97,13 +103,17 @@ export default class MiningBehavior {
     // Track current tunnel dimensions for obstacle scanning
     this.currentTunnelWidth = null;
     this.currentTunnelHeight = null;
+    
+    // Track recently scanned vein positions to prevent infinite loops
+    this.recentVeinScans = new Map(); // position key -> timestamp
+    this.veinScanCooldown = 5000; // 5 second cooldown per position
 
     // Deposit behavior
     this.depositAfterCompletion = false;
 
     // Preload food list (shared with EatBehavior) for keep rules
     try {
-      const foodPath = path.resolve('./src/config/foodList.json');
+      const foodPath = path.join(__dirname, '..', 'config', 'foodList.json');
       const raw = fs.readFileSync(foodPath, 'utf-8');
       this._foodList = JSON.parse(raw);
     } catch (_) {
@@ -1323,6 +1333,33 @@ export default class MiningBehavior {
       return true;
     }
     
+    // Reserve this position with coordinator to avoid other bots digging the same block
+    if (this.bot.coordinator) {
+      try {
+        await this.bot.coordinator.registerPathfindingGoal(this.bot.username, pos, 'mining');
+      } catch (_e) {}
+    }
+
+    // Try to claim the block before digging (retry a few times if busy)
+    let claimedHere = true;
+    if (this.bot.coordinator) {
+      claimedHere = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const ok = await this.bot.coordinator.claimBlock(this.bot.username, pos, 'mining');
+          if (ok) { claimedHere = true; break; }
+        } catch (_e) {}
+        // small backoff
+        await new Promise(r => setTimeout(r, 150 + (attempt * 100)));
+      }
+      if (!claimedHere) {
+        this._emitDebug(`Block at ${pos} is claimed by another bot; skipping`);
+        // cleanup pathfinding goal
+        try { if (this.bot.coordinator) this.bot.coordinator.clearPathfindingGoal(this.bot.username); } catch (_) {}
+        return false;
+      }
+    }
+
     try {
       // Navigate only if outside of breaking reach; otherwise try digging from here
       const distToTarget = this.bot.entity.position.distanceTo(pos);
@@ -1372,6 +1409,26 @@ export default class MiningBehavior {
       // Use ToolHandler for smart tool selection if available
       const blockToDig = this.bot.blockAt(pos);
       if (blockToDig && blockToDig.type !== 0) {
+        // Check for vein mining opportunity before digging
+        if (this.bot.oreScanner && this._isVeinMiningEnabled()) {
+          const isOre = this.bot.oreScanner.isOre(blockToDig.name);
+          if (isOre) {
+            this._emitDebug(`Detected ore ${blockToDig.name} at ${pos}, checking for vein`);
+            const veinMined = await this._veinMine(pos);
+            if (veinMined) {
+              // Vein was mined, check if current block is now air
+              const afterBlock = this.bot.blockAt(pos);
+              if (!afterBlock || afterBlock.type === 0) {
+                this._emitDebug('Current ore block mined as part of vein');
+                return true;
+              }
+              // Block still exists, continue with normal mining
+              this._emitDebug('Vein mined but current block still exists, mining it now');
+            }
+            // If vein mining failed or was skipped, continue with normal dig
+          }
+        }
+        
         try {
           if (this.bot.toolHandler) {
             // Smart dig - automatically selects and equips best tool
@@ -1416,8 +1473,13 @@ export default class MiningBehavior {
           }
         }
         
-        this.blocksMinedThisSession++;
-        
+  this.blocksMinedThisSession++;
+
+  // release the block claim after successful dig so others can use area
+        try { if (claimedHere && this.bot.coordinator) this.bot.coordinator.releaseBlock(pos); } catch (_) {}
+
+        // clear pathfinding goal
+        try { if (this.bot.coordinator) this.bot.coordinator.clearPathfindingGoal(this.bot.username); } catch (_) {}
         // Small delay after digging
         await new Promise(r => setTimeout(r, 50));
       }
@@ -1452,10 +1514,14 @@ export default class MiningBehavior {
       }
       
       return true;
-      
+
     } catch (e) {
-      this._emitDebug(`Failed to dig at ${pos}:`, e.message);
+      this._emitDebug(`Failed to dig at ${pos}:`, e.message || e);
       return false;
+    } finally {
+      // Ensure we always clear any pathfinding goal and release claim
+      try { if (this.bot.coordinator) this.bot.coordinator.clearPathfindingGoal(this.bot.username); } catch (_) {}
+      try { if (claimedHere && this.bot.coordinator) this.bot.coordinator.releaseBlock(pos); } catch (_) {}
     }
   }
 
@@ -1702,13 +1768,34 @@ export default class MiningBehavior {
           break;
         }
 
+        // Periodically check if coordinator reassigned a different zone for this bot
+        try {
+          if (this.bot.coordinator) {
+            const zone = this.bot.coordinator.getWorkZone(this.bot.username, 'quarry');
+            if (zone) {
+              // If the zone doesn't match the plan's bounding box, regenerate the plan
+              const planMinX = Math.min(plan[0].position.x, (plan[plan.length-1] && plan[plan.length-1].position && plan[plan.length-1].position.x) || plan[0].position.x);
+              const zoneMinX = Math.min(zone.start.x, zone.end.x);
+              if (planMinX !== zoneMinX) {
+                this._emitDebug('Quarry zone changed - regenerating plan for new assignment');
+                // regenerate plan for new zone
+                const newPlan = this._generateQuarryPlan(zone.start, zone.end, depth || 1);
+                plan.length = 0; // clear
+                for (const p of newPlan) plan.push(p);
+                lastLayer = -1;
+                continue; // restart loop with new plan
+              }
+            }
+          }
+        } catch (_) {}
+
         // When starting a new layer, collect items from the previous layer
         if (digAction.layer !== lastLayer) {
           // If this isn't the first layer, do a collection sweep
           if (lastLayer >= 0 && this.bot.itemCollector) {
             this._emitDebug(`Layer ${lastLayer + 1} complete - collecting dropped items...`);
             try {
-              const collected = await this.bot.itemCollector.collectOnce({ radius: 16 });
+              const collected = await this.bot.itemCollector.collectOnce({ radius: 16, force: true });
               if (collected > 0) {
                 this._emitDebug(`Collected ${collected} items from layer ${lastLayer + 1}`);
               }
@@ -1760,7 +1847,7 @@ export default class MiningBehavior {
       if (this.bot.itemCollector) {
         this._emitDebug('Final collection sweep after quarry completion...');
         try {
-          const collected = await this.bot.itemCollector.collectOnce({ radius: 20 });
+          const collected = await this.bot.itemCollector.collectOnce({ radius: 20, force: true });
           if (collected > 0) {
             this._emitDebug(`Collected ${collected} items in final sweep`);
           }
@@ -1902,6 +1989,260 @@ export default class MiningBehavior {
     this._emitDebug('Mining operation stopped by user');
   }
 
+  /**
+   * PUBLIC API: Mine a vein at specific position (standalone usage)
+   * Can be called directly by commands or other behaviors
+   * @param {Vec3} position - Position of ore block to start vein mining
+   * @returns {Object} Result: { success, minedCount, oreType }
+   */
+  async mineVeinAt(position) {
+    if (!this.bot.oreScanner) {
+      return { success: false, error: 'OreScanner not available' };
+    }
+
+    // Check if position contains ore
+    const block = this.bot.blockAt(position);
+    if (!block || !this.bot.oreScanner.isOre(block.name)) {
+      return { success: false, error: 'No ore at specified position' };
+    }
+
+    this.logger.info(`[Mining] Starting standalone vein mining at ${position}`);
+
+    // Temporarily enable mining for vein mining
+    const wasWorking = this.isWorking;
+    const wasEnabled = this.enabled;
+    
+    this.isWorking = true;
+    this.enabled = true;
+
+    try {
+      const result = await this._veinMine(position);
+      const oreType = block.name;
+      
+      return {
+        success: result,
+        minedCount: this.blocksMinedThisSession,
+        oreType: oreType
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err.message
+      };
+    } finally {
+      // Restore previous state
+      this.isWorking = wasWorking;
+      this.enabled = wasEnabled;
+    }
+  }
+
+  /**
+   * Continuous vein mining mode
+   * Scans for ores in radius, mines them, repeats until inventory full or stopped
+   * @param {number} scanRadius - Radius to scan for ores (default from config)
+   * @returns {Object} Result with statistics
+   */
+  async startContinuousVeinMining(scanRadius = null) {
+    if (this.isWorking) {
+      this.logger.warn('[Mining] Already mining, cannot start continuous vein mining');
+      return { success: false, error: 'Already mining' };
+    }
+
+    if (!this.bot.oreScanner) {
+      this.logger.error('[Mining] OreScanner not available');
+      return { success: false, error: 'OreScanner not available' };
+    }
+
+    // Get config
+    const cfg = this.bot.config?.behaviors?.mining || {};
+    const radius = scanRadius || cfg.continuousVeinScanRadius || 32;
+    const inventoryThreshold = cfg.continuousVeinInventoryThreshold || 320;
+
+    this.enabled = true;
+    this.isWorking = true;
+    this.currentMode = 'continuous-vein';
+    
+    const startTime = Date.now();
+    let totalOresMined = 0;
+    let scanIterations = 0;
+    let oresFoundByType = {};
+
+    this.logger.info(`[Mining] Starting continuous vein mining (radius: ${radius}, stop at: ${inventoryThreshold}/400 slots)`);
+    this.logger.info('[Mining] Send !stop or !home to stop mining');
+
+    try {
+      while (this.enabled && this.isWorking) {
+        scanIterations++;
+        this.logger.info(`[Mining] Scan iteration #${scanIterations}`);
+
+        // Check inventory before scanning
+        const inventoryUsed = this._getInventoryUsed();
+        if (inventoryUsed >= inventoryThreshold) {
+          this.logger.success(`[Mining] Inventory threshold reached (${inventoryUsed}/${inventoryThreshold}), stopping`);
+          break;
+        }
+
+        // Find all ores in radius
+        const botPos = this.bot.entity.position;
+        const oresFound = this._findOresInRadius(botPos, radius);
+
+        if (oresFound.length === 0) {
+          this.logger.info('[Mining] No ores found in scan radius, stopping');
+          break;
+        }
+
+        this.logger.info(`[Mining] Found ${oresFound.length} ore blocks in radius`);
+
+        // Sort ores by distance (closest first)
+        oresFound.sort((a, b) => a.distance - b.distance);
+
+        // Mine each ore (which will trigger vein mining)
+        for (const oreInfo of oresFound) {
+          if (!this.enabled || !this.isWorking) {
+            this.logger.info('[Mining] Stopped by user command');
+            break;
+          }
+
+          // Check inventory periodically
+          const currentUsed = this._getInventoryUsed();
+          if (currentUsed >= inventoryThreshold) {
+            this.logger.success(`[Mining] Inventory threshold reached (${currentUsed}/${inventoryThreshold}), stopping`);
+            this.isWorking = false;
+            break;
+          }
+
+          // Navigate to ore
+          try {
+            await this._goto(oreInfo.position, 15000, 'mining', 4);
+          } catch (gotoErr) {
+            this.logger.warn(`[Mining] Failed to reach ore at ${oreInfo.position}: ${gotoErr.message}`);
+            continue;
+          }
+
+          // Check if ore still exists
+          const block = this.bot.blockAt(oreInfo.position);
+          if (!block || !this.bot.oreScanner.isOre(block.name)) {
+            this._emitDebug('Ore no longer exists, skipping');
+            continue;
+          }
+
+          // Mine the vein (will trigger automatic vein mining)
+          const beforeCount = this.blocksMinedThisSession;
+          const veinMined = await this._veinMine(oreInfo.position);
+          const minedThisVein = this.blocksMinedThisSession - beforeCount;
+
+          if (veinMined && minedThisVein > 0) {
+            totalOresMined += minedThisVein;
+            oresFoundByType[block.name] = (oresFoundByType[block.name] || 0) + minedThisVein;
+            this.logger.info(`[Mining] Mined ${minedThisVein} ${block.name} (total: ${totalOresMined})`);
+          }
+
+          // Small delay between ores
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        // Small delay between scan iterations
+        if (this.enabled && this.isWorking) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+
+      // Summary
+      const duration = Math.round((Date.now() - startTime) / 1000);
+      const inventoryUsed = this._getInventoryUsed();
+
+      this.logger.success(`[Mining] Continuous vein mining complete!`);
+      this.logger.success(`  Duration: ${duration}s (${scanIterations} scans)`);
+      this.logger.success(`  Total ores mined: ${totalOresMined}`);
+      this.logger.success(`  Inventory: ${inventoryUsed}/400 slots used`);
+      
+      // Log breakdown by ore type
+      if (Object.keys(oresFoundByType).length > 0) {
+        this.logger.success('  Breakdown by ore type:');
+        for (const [oreName, count] of Object.entries(oresFoundByType)) {
+          this.logger.success(`    - ${oreName}: ${count}`);
+        }
+      }
+
+      return {
+        success: true,
+        totalOresMined,
+        scanIterations,
+        duration,
+        inventoryUsed,
+        oresFoundByType
+      };
+
+    } catch (err) {
+      this.logger.error(`[Mining] Continuous vein mining error: ${err.message}`);
+      return {
+        success: false,
+        error: err.message,
+        totalOresMined,
+        scanIterations
+      };
+    } finally {
+      this.isWorking = false;
+      this.currentMode = null;
+    }
+  }
+
+  /**
+   * Find all ore blocks within radius
+   * @param {Vec3} center - Center position
+   * @param {number} radius - Search radius
+   * @returns {Array} Array of {position, block, distance}
+   * @private
+   */
+  _findOresInRadius(center, radius) {
+    if (!this.bot.oreScanner) return [];
+
+    const ores = [];
+    const minX = Math.floor(center.x - radius);
+    const maxX = Math.floor(center.x + radius);
+    const minY = Math.floor(Math.max(center.y - radius, this.bot.game.minY || -64));
+    const maxY = Math.floor(Math.min(center.y + radius, this.bot.game.maxY || 320));
+    const minZ = Math.floor(center.z - radius);
+    const maxZ = Math.floor(center.z + radius);
+
+    // Scan area for ores
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          const pos = new Vec3(x, y, z);
+          const distance = pos.distanceTo(center);
+          
+          if (distance > radius) continue;
+
+          const block = this.bot.blockAt(pos);
+          if (block && this.bot.oreScanner.isOre(block.name)) {
+            ores.push({
+              position: pos,
+              block: block,
+              distance: distance
+            });
+          }
+        }
+      }
+    }
+
+    return ores;
+  }
+
+  /**
+   * Get inventory used count
+   * @returns {number} Number of inventory slots used
+   * @private
+   */
+  _getInventoryUsed() {
+    try {
+      const items = this.bot.inventory.items();
+      return items.reduce((sum, item) => sum + (item ? item.count : 0), 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
   // ============================================================================
   // PLACEHOLDER FUNCTIONS - FUTURE IMPLEMENTATION
   // ============================================================================
@@ -1909,7 +2250,7 @@ export default class MiningBehavior {
   /**
    * TODO: Implement torch placement at intervals
    */
-  async _placeTorch(position) {
+  async _placeTorch(_position) {
     this._emitDebug('Torch placement - TODO: Not yet implemented');
     // Check if torch in inventory
     // Navigate to position
@@ -1917,20 +2258,211 @@ export default class MiningBehavior {
   }
 
   /**
-   * TODO: Implement vein mining when ore is discovered
+   * Mine connected ore blocks (vein mining)
+   * Scans for connected ore and mines them before resuming main plan
+   * @param {Vec3} orePosition - Position of the initial ore block
+   * @returns {boolean} True if vein was mined, false if skipped
    */
   async _veinMine(orePosition) {
-    this._emitDebug('Vein mining - TODO: Not yet implemented');
-    // Detect ore type
-    // Find all connected ore blocks
-    // Mine them systematically
-    // Return to original mining plan position
+    if (!this.bot.oreScanner) {
+      this._emitDebug('OreScanner not available, skipping vein mining');
+      return false;
+    }
+
+    // Check cooldown to prevent infinite loops on same position
+    const posKey = this._posKey(orePosition);
+    const now = Date.now();
+    const lastScan = this.recentVeinScans.get(posKey);
+    
+    if (lastScan && (now - lastScan) < this.veinScanCooldown) {
+      this._emitDebug(`Vein scan on cooldown for ${posKey} (${Math.round((now - lastScan) / 1000)}s ago)`);
+      return false;
+    }
+
+    // Mark this position as scanned
+    this.recentVeinScans.set(posKey, now);
+    
+    // Clean up old entries (older than 30 seconds)
+    for (const [key, timestamp] of this.recentVeinScans.entries()) {
+      if (now - timestamp > 30000) {
+        this.recentVeinScans.delete(key);
+      }
+    }
+
+    try {
+      // Get vein mining config
+      const cfg = this.bot.config?.behaviors?.mining || {};
+      const maxBlocks = cfg.veinMaxBlocks || 64;
+      const searchRadius = cfg.veinSearchRadius || 16;
+
+      this._emitDebug(`Scanning vein from ${orePosition} (max: ${maxBlocks} blocks, radius: ${searchRadius})`);
+
+      // Scan the vein
+      const veinResult = await this.bot.oreScanner.scanVein(orePosition, {
+        maxBlocks,
+        maxDistance: searchRadius,
+        sortByDistance: true
+      });
+
+      if (!veinResult || veinResult.count === 0) {
+        this._emitDebug('No vein found or scan failed');
+        return false;
+      }
+
+      this.logger.info(`[Mining] Found vein of ${veinResult.count} ${veinResult.oreType} blocks`);
+
+      // Save current mining plan state
+      const savedPlan = [...this.miningPlan];
+      const savedIndex = this.currentPlanIndex;
+
+      // Get optimal mining order (nearest-neighbor)
+      const orderedBlocks = this.bot.oreScanner.getOptimalMiningOrder(
+        veinResult.blocks,
+        this.bot.entity.position
+      );
+
+      this._emitDebug(`Mining vein in optimal order (${orderedBlocks.length} blocks)`);
+
+      // Mine each ore block in the vein
+      let minedCount = 0;
+      let currentPos = this.bot.entity.position.clone();
+
+      for (let i = 0; i < orderedBlocks.length; i++) {
+        if (!this.enabled || !this.isWorking) {
+          this._emitDebug('Mining stopped during vein mining');
+          break;
+        }
+
+        const oreBlock = orderedBlocks[i];
+        const targetPos = oreBlock.position;
+
+        // Check if ore still exists
+        const block = this.bot.blockAt(targetPos);
+        if (!block || !this.bot.oreScanner.isOre(block.name)) {
+          this._emitDebug(`Ore at ${targetPos} no longer exists, skipping`);
+          continue;
+        }
+
+        // Calculate distance to ore
+        const distance = currentPos.distanceTo(targetPos);
+        const miningReach = this.settings.digReachDistance || 5;
+
+        // Pathfind to ore if not in range
+        if (distance > miningReach) {
+          this._emitDebug(`Pathfinding to ore ${i + 1}/${orderedBlocks.length} at ${targetPos} (${distance.toFixed(1)}m away)`);
+          
+          try {
+            await this._goto(targetPos, 15000, 'vein-mining', Math.max(2, miningReach - 0.5));
+            currentPos = this.bot.entity.position.clone();
+          } catch (gotoErr) {
+            this.logger.warn(`[Mining] Failed to reach ore at ${targetPos}: ${gotoErr.message}`);
+            continue;
+          }
+        }
+
+        // Re-check if ore still exists after pathfinding
+        const blockAfterPath = this.bot.blockAt(targetPos);
+        if (!blockAfterPath || !this.bot.oreScanner.isOre(blockAfterPath.name)) {
+          this._emitDebug(`Ore at ${targetPos} no longer exists after pathfinding, skipping`);
+          continue;
+        }
+
+        // Mine the ore
+        try {
+          // Use ToolHandler for smart tool selection
+          if (this.bot.toolHandler) {
+            await this.bot.toolHandler.smartDig(blockAfterPath);
+          } else {
+            // Fallback: manual pickaxe
+            await this._ensurePickaxe();
+            if (this._needsToolReplacement()) {
+              this.logger.warn('[Mining] Tool needs replacement during vein mining');
+              break;
+            }
+            await this.bot.dig(blockAfterPath);
+          }
+
+          // Wait for block to break and drops to spawn
+          await new Promise(r => setTimeout(r, 300));
+
+          // Collect nearby drops (items from mined ore)
+          const dropRadius = 3;
+          const nearbyItems = Object.values(this.bot.entities).filter(e => 
+            e.name === 'item' && 
+            e.position && 
+            e.position.distanceTo(targetPos) <= dropRadius
+          );
+
+          if (nearbyItems.length > 0) {
+            this._emitDebug(`Collecting ${nearbyItems.length} item drops near ${targetPos}`);
+            
+            // Move to collect drops
+            for (const itemEntity of nearbyItems.slice(0, 5)) { // Limit to 5 nearest
+              try {
+                if (this.bot.entities[itemEntity.id]) { // Check entity still exists
+                  await this._goto(itemEntity.position, 3000, 'collect-drop', 1.5);
+                  await new Promise(r => setTimeout(r, 200)); // Wait for pickup
+                }
+              } catch (_) {
+                // Item might despawn or be picked up automatically
+              }
+            }
+          }
+
+          // Successfully mined
+          minedCount++;
+          this.blocksMinedThisSession++;
+          
+          // Log after successful mining
+          this.logger.info(`[Mining] Mined ore ${minedCount}/${orderedBlocks.length} (${veinResult.oreType})`);
+
+          // Update current position after collection
+          currentPos = this.bot.entity.position.clone();
+
+        } catch (digErr) {
+          this._emitDebug(`Failed to mine vein block at ${targetPos}: ${digErr.message}`);
+          continue;
+        }
+
+        // Check inventory periodically
+        if (minedCount % 5 === 0) {
+          const inventoryUsed = this._getInventoryUsed();
+          if (inventoryUsed >= this.settings.depositThreshold) {
+            this.logger.warn('[Mining] Inventory full during vein mining, stopping vein');
+            break;
+          }
+        }
+
+        // Small delay between ores to prevent overwhelming the bot
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      // Restore mining plan state
+      this.miningPlan = savedPlan;
+      this.currentPlanIndex = savedIndex;
+
+      this.logger.success(`[Mining] Vein mining complete: ${minedCount}/${veinResult.count} blocks mined`);
+      return minedCount > 0;
+
+    } catch (err) {
+      this.logger.error(`[Mining] Vein mining error: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Check if vein mining is enabled in config
+   * @returns {boolean}
+   */
+  _isVeinMiningEnabled() {
+    const cfg = this.bot.config?.behaviors?.mining || {};
+    return cfg.veinMiningEnabled !== false; // Enabled by default
   }
 
   /**
    * TODO: Implement light level checking for safety
    */
-  _checkLightLevel(position) {
+  _checkLightLevel(_position) {
     // Check if light level is adequate
     // Return true if safe, false if needs torch
     return true;

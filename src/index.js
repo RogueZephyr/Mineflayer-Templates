@@ -1,5 +1,5 @@
 import ConfigLoader from './core/ConfigLoader.js';
-import BotController from './core/BotController.js';
+import { BotController } from './core/BotController.js';
 import BotCoordinator from './core/BotCoordinator.js';
 import MetricsAdapter from './utils/MetricsAdapter.js';
 import readline from 'readline';

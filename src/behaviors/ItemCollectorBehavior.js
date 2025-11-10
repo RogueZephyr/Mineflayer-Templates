@@ -12,14 +12,42 @@ export default class ItemCollectorBehavior {
     this.isRunning = false;
     this._interval = null;
     this.idleDelayMs = 500; // wait after reaching an item
+    this.lookBehavior = null;
+    // When true, background collection yields to higher-priority work
+    this.deferToHighPriority = true;
   }
 
   enable() { this.enabled = true; }
   disable() { this.enabled = false; this.stopAuto(); }
 
+  setLookBehavior(lookBehavior) {
+    this.lookBehavior = lookBehavior;
+  }
+
   _emitDebug(...args) {
     const botName = this.bot.username || 'Unknown';
     try { if (this.bot.debugTools) this.bot.debugTools.log('itemCollector', `[${botName}]`, ...args); } catch (_) {}
+  }
+
+  _shouldDeferBackground() {
+    try {
+      if (!this.deferToHighPriority) return false;
+  const _ctl = this.bot?.controller || null; // optional
+      const behaviors = this.bot?.behaviors || this.bot?.controller?.behaviors || {};
+      // Defer if high-priority behaviors are active
+      if (behaviors.mining?.isWorking) return true;
+      if (behaviors.farm?.isWorking) return true;
+      if (behaviors.woodcutting?.isWorking) return true;
+      // Defer immediately after a user command for a short grace period
+      const lastCmd = this.bot?.lastCommandAt || 0;
+      if (Date.now() - lastCmd < 2000) return true;
+      // Defer if task queue is currently processing (lets explicit tasks drive the bot)
+      const tq = this.bot?.taskQueue;
+      if (tq?.getStatus?.().isProcessing) return true;
+      // Defer if pathfinder currently has a goal (bot is moving for another purpose)
+      if (this.bot?.pathfinder?.goal) return true;
+    } catch (_) {}
+    return false;
   }
 
   _isItemEntity(entity) {
@@ -98,8 +126,16 @@ export default class ItemCollectorBehavior {
 
   async collectOnce(opts = {}) {
     if (!this.enabled) return 0;
-    const { area, type, radius, workZone } = opts || {};
+    const { area, type, radius, workZone, force = false } = opts || {};
+    // If not forced, skip when higher-priority work is in progress
+    if (!force && this._shouldDeferBackground()) {
+      this._emitDebug('collectOnce deferred to higher-priority task');
+      return 0;
+    }
     let targets = [];
+
+  // Pause look behavior during collection
+  if (this.lookBehavior) this.lookBehavior.pause();
 
     try {
       if (area && area.start && area.end) {
@@ -114,9 +150,13 @@ export default class ItemCollectorBehavior {
       // Use workZone to constrain the radius collection if provided
       targets = this._itemsNearby(radius || 8, workZone);
     }
-    if (!targets.length) return 0;
+    if (!targets.length) {
+      // Resume look behavior before returning
+      if (this.lookBehavior) this.lookBehavior.resume();
+      return 0;
+    }
 
-    // Limit items per collection pass to prevent overload
+  // Limit items per collection pass to prevent overload
     const maxItems = 10;
     const itemsToCollect = targets.slice(0, maxItems);
 
@@ -134,6 +174,10 @@ export default class ItemCollectorBehavior {
       }
     }
     if (collected) this._emitDebug(`collectOnce: collected ${collected} items`);
+    
+    // Resume look behavior after collection
+    if (this.lookBehavior) this.lookBehavior.resume();
+    
     return collected;
   }
 
@@ -148,7 +192,8 @@ export default class ItemCollectorBehavior {
     const tick = async () => {
       if (!this.enabled) return;
       try {
-        await this.collectOnce({ type, radius });
+        // Background collection: not forced, so it will yield to high-priority work
+        await this.collectOnce({ type, radius, force: false });
       } catch (e) {
         this._emitDebug('startAuto tick error', e.message || e);
       }

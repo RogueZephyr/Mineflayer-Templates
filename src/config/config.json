@@ -9,7 +9,7 @@
   
   "_proxy": "Proxy Settings - Route bot connections through a proxy (requires 'socks' module: npm install socks)",
   "proxy": {
-    "enabled": true,
+    "enabled": false,
     "host": "127.0.0.1",
     "port": 9050,
     "type": 5,
@@ -50,7 +50,9 @@
     "farming": {
       "enabled": true,
       "scanInterval": 1000,
-      "crops": ["wheat", "carrots", "potatoes"]
+      "crops": ["wheat", "carrots", "potatoes"],
+      "subdivideMinBots": 2,
+      "_subdivideMinBotsHelp": "Minimum number of farming bots before the farm area is subdivided. 2 means single bot uses full area."
     },
     
     "_itemCollector": "Item Collector - Bot automatically picks up nearby items",
@@ -59,6 +61,11 @@
       "type": "farm",
       "intervalMs": 10000,
       "radius": 8
+    },
+    
+    "_idleBehavior": "Idle Behavior - Bot goes to idle area and waits for tasks or night",
+    "idle": {
+      "idleLocation": { "x": 352, "y": 63, "z": 217 }
     },
     
     "_woodcuttingBehavior": "Woodcutting Behavior - Bot harvests trees, pillars up tall trees, replants saplings",
@@ -98,10 +105,12 @@
       "_logBreakDelayHelp": "Delay between breaking individual logs. Default: 100ms",
       
       "cleanupDigDelayMs": 80,
-      "_cleanupDigDelayHelp": "Wait between digging each scaffold block during cleanup. Default: 80ms"
+      "_cleanupDigDelayHelp": "Wait between digging each scaffold block during cleanup. Default: 80ms",
+      "subdivideMinBots": 2,
+      "_subdivideMinBotsHelp": "Minimum number of woodcutting bots before area subdivision. 2 means single bot uses full area."
     },
 
-    "_miningBehavior": "Mining Behavior - Bot mines in various patterns (strip-mining, quarry, tunnels)",
+  "_miningBehavior": "Mining Behavior - Bot mines in various patterns (strip-mining, quarry, tunnels)",
     "mining": {
       "_general": "General Mining Settings",
       "enabled": true,
@@ -166,7 +175,27 @@
       "_safetySettings": "Safety Features (PLACEHOLDER - NOT YET IMPLEMENTED)",
       "checkLightLevel": false,
       "minLightLevel": 8,
-      "_safetyHelp": "Light level checks and mob avoidance - future implementation"
+      "_safetyHelp": "Light level checks and mob avoidance - future implementation",
+      
+      "_veinMiningSettings": "Vein Mining - Automatically mine connected ore blocks",
+      "veinMiningEnabled": true,
+      "_veinMiningEnabledHelp": "Enable automatic vein mining when ore is detected",
+      
+      "veinMaxBlocks": 64,
+      "_veinMaxBlocksHelp": "Maximum number of blocks to scan in a single vein (prevents infinite loops)",
+      
+      "veinSearchRadius": 16,
+      "_veinSearchRadiusHelp": "Maximum distance to search for connected ore blocks from the initial ore",
+      
+      "veinMiningOres": [],
+      "_veinMiningOresHelp": "Additional custom/modded ore names to detect (e.g., ['create:zinc_ore']). Vanilla ores are included by default.",
+      
+      "_continuousVeinMiningSettings": "Continuous Vein Mining Mode - !mine vein command behavior",
+      "continuousVeinScanRadius": 32,
+      "_continuousVeinScanRadiusHelp": "Radius to scan for ores when using !mine vein command",
+      
+      "continuousVeinInventoryThreshold": 500,
+      "_continuousVeinInventoryThresholdHelp": "Stop continuous vein mining when inventory reaches this threshold (out of 400 total slots)"
     }
   },
   

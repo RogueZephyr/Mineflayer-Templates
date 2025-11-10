@@ -146,7 +146,7 @@ export default class FarmBehavior {
               try { if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') this.bot.pathfinder.setGoal(null); } catch(_) {}
               return reject(new Error('navigation timeout'));
             }
-          } catch (err) {
+          } catch (_) {
             // ignore transient
           }
         }, 250);
@@ -202,6 +202,23 @@ export default class FarmBehavior {
     if (!block) return false;
 
     try {
+      // Claim this crop block via coordinator to avoid collisions
+      let claimed = true;
+      if (this.bot.coordinator) {
+        claimed = false;
+        for (let i = 0; i < 3; i++) {
+          try {
+            const ok = await this.bot.coordinator.claimBlock(this.bot.username, new Vec3(Math.floor(blockPos.x), Math.floor(blockPos.y), Math.floor(blockPos.z)), 'farming');
+            if (ok) { claimed = true; break; }
+          } catch (_e) {}
+          await new Promise(r => setTimeout(r, 150));
+        }
+        if (!claimed) {
+          this._emitDebug('Crop block claimed by another bot, skipping harvest', blockPos);
+          return false;
+        }
+      }
+
       // harvest the crop
       await this.bot.dig(block);
       await new Promise(r => setTimeout(r, 150));
@@ -288,6 +305,20 @@ export default class FarmBehavior {
     }
 
     try {
+      // Claim the farmland block to prevent other bots from planting here
+      if (this.bot.coordinator) {
+        try {
+          await this.bot.coordinator.registerPathfindingGoal(this.bot.username, farmlandPos, 'farming');
+        } catch (_) {}
+        for (let i = 0; i < 3; i++) {
+          try {
+            const ok = await this.bot.coordinator.claimBlock(this.bot.username, new Vec3(Math.floor(farmlandPos.x), Math.floor(farmlandPos.y), Math.floor(farmlandPos.z)), 'farming');
+            if (ok) break;
+          } catch (_) {}
+          await new Promise(r => setTimeout(r, 120));
+        }
+      }
+
       await this.bot.equip(seed, 'hand');
   // ensure we pass a Vec3 to bot.blockAt()
   const blockBelow = this.bot.blockAt(new Vec3(Math.floor(farmlandPos.x), Math.floor(farmlandPos.y), Math.floor(farmlandPos.z)));
@@ -515,49 +546,72 @@ export default class FarmBehavior {
     // Assign work zone if coordinator is available
     let workArea = area;
     if (this.bot.coordinator) {
-      // Get all active bots (regardless of position)
-      const activeBots = this.bot.coordinator.getAllBotPositions();
-      const botCount = activeBots.length;
-      
-      this._emitDebug(`Detected ${botCount} active bot(s)`);
-      
-      // Check if we already have a work zone assigned
+      // Determine intended farming group:
+      // 1. Prefer pendingFarmStartGroup set by manager broadcast.
+      // 2. Otherwise derive from bots already farming (isWorking true).
+      // 3. Fallback to just this bot.
+      let group = [];
+      try {
+        if (Array.isArray(this.bot.pendingFarmStartGroup) && this.bot.pendingFarmStartGroup.length) {
+          group = this.bot.pendingFarmStartGroup.map(b => String(b));
+        } else {
+          // Build group from bots currently farming
+          for (const [botId, entry] of this.bot.coordinator.bots.entries()) {
+            const otherBot = entry.bot;
+            if (otherBot && otherBot.behaviors && otherBot.behaviors.farm && otherBot.behaviors.farm.isWorking) {
+              group.push(botId);
+            }
+          }
+          // Include self if not already present (we're about to start)
+          if (!group.includes(this.bot.username)) group.push(this.bot.username);
+        }
+      } catch (_) {
+        group = [this.bot.username];
+      }
+
+      // Apply optional minimum subdivision threshold from config (default: 2)
+      const subdivideMin = this.bot.config?.behaviors?.farming?.subdivideMinBots ?? 2;
+      const groupCount = group.length;
+      this._emitDebug(`Farming group (count=${groupCount}, subdivideMin=${subdivideMin}): ${JSON.stringify(group)}`);
+
+      // Stable ordering for zone assignment
+      const ordered = group.slice().sort((a,b) => a.localeCompare(b));
+      const myIndex = ordered.indexOf(this.bot.username);
       const existingZone = this.bot.coordinator.getWorkZone(this.bot.username, 'farm');
-      
-      if (botCount > 1) {
-        // Multiple bots - need to divide area
+
+      if (groupCount >= subdivideMin) {
         if (existingZone) {
           workArea = existingZone;
           this._emitDebug('Using existing work zone assignment');
-        } else {
-          // Get list of all bot IDs for stable zone assignment
-          const botIds = activeBots.map(b => b.botId).sort(); // Sort for consistent ordering
-          this._emitDebug(`Bot IDs: ${JSON.stringify(botIds)}, My ID: ${this.bot.username}`);
-          
-          const myIndex = botIds.indexOf(this.bot.username);
-          this._emitDebug(`My index in sorted list: ${myIndex}`);
-          
-          if (myIndex >= 0) {
-            // Divide area among all bots
-            const zones = this.bot.coordinator.divideArea(area, botCount, this.bot.username);
-            this._emitDebug(`Zones created: ${zones.length}`);
-            if (myIndex < zones.length) {
-              workArea = zones[myIndex];
-              this.bot.coordinator.assignWorkZone(this.bot.username, 'farm', workArea);
-              this._emitDebug(`Assigned to work zone ${myIndex + 1}/${botCount} - X: ${workArea.start.x}-${workArea.end.x}, Z: ${workArea.start.z}-${workArea.end.z}`);
-            }
+        } else if (myIndex >= 0) {
+          const zones = this.bot.coordinator.divideArea(area, groupCount, this.bot.username);
+          this._emitDebug(`Zones created: ${zones.length}`);
+          if (myIndex < zones.length) {
+            workArea = zones[myIndex];
+            this.bot.coordinator.assignWorkZone(this.bot.username, 'farm', workArea);
+            this._emitDebug(`Assigned to work zone ${myIndex + 1}/${groupCount} - X: ${workArea.start.x}-${workArea.end.x}, Z: ${workArea.start.z}-${workArea.end.z}`);
           }
         }
       } else {
-        // Single bot - use full area
-        this._emitDebug('Single bot mode - using full farming area');
+        this._emitDebug('Subdivision skipped (group below threshold) - using full farming area');
+        // Clear any stale assignment
+        if (existingZone) {
+          workArea = area; // ensure full area usage if previously subdivided
+        }
       }
     }
 
     // Add staggered start delay to prevent all bots from working simultaneously
     if (this.bot.coordinator) {
-      const activeBots = this.bot.coordinator.getAllBotPositions();
-      const botIds = activeBots.map(b => b.botId).sort();
+      // Use the same ordered farming group for stagger to keep consistency
+      let botIds = [];
+      try {
+        if (Array.isArray(this.bot.pendingFarmStartGroup) && this.bot.pendingFarmStartGroup.length) {
+          botIds = this.bot.pendingFarmStartGroup.slice().sort((a,b)=>a.localeCompare(b));
+        } else {
+          botIds = [this.bot.username];
+        }
+      } catch (_) { botIds = [this.bot.username]; }
       const myIndex = botIds.indexOf(this.bot.username);
       
       if (myIndex > 0) {
@@ -570,6 +624,13 @@ export default class FarmBehavior {
     // loop until disabled
     try {
       while (this.enabled && this.isWorking) {
+        // Refresh workArea dynamically if coordinator has reassigned zones
+        try {
+          if (this.bot.coordinator) {
+            const zone = this.bot.coordinator.getWorkZone(this.bot.username, 'farm');
+            if (zone) workArea = zone;
+          }
+        } catch (_) {}
         // ensure hoe present
         if (!await this.getHoe()) {
           this._emitDebug('startFarming: no hoe available, aborting loop');
@@ -669,7 +730,7 @@ export default class FarmBehavior {
         try {
           if (this.bot.itemCollector && typeof this.bot.itemCollector.collectOnce === 'function') {
             // Only collect items within 3 blocks of bot's current position AND within their work zone
-            await this.bot.itemCollector.collectOnce({ radius: 3, workZone: workArea });
+            await this.bot.itemCollector.collectOnce({ radius: 3, workZone: workArea, force: true });
           } else if (typeof this._collectDroppedItems === 'function') {
             // fallback to local method if collector not available
             await this._collectDroppedItems(workArea);

@@ -19,6 +19,8 @@ import ItemCollectorBehavior from '../behaviors/ItemCollectorBehavior.js';
 import HomeBehavior from '../behaviors/HomeBehavior.js';
 import WoodCuttingBehavior from '../behaviors/WoodCuttingBehavior.js';
 import MiningBehavior from '../behaviors/MiningBehavior.js';
+import MessageHandler from '../behaviors/MessageHandler.js';
+import IdleBehavior from '../behaviors/IdleBehavior.js';
 import SaveChestLocation from '../utils/SaveChestLocation.js';
 import DebugTools from '../utils/DebugTools.js';
 import PathfindingUtil from '../utils/PathfindingUtil.js';
@@ -27,11 +29,14 @@ import ScaffoldingUtil from '../utils/ScaffoldingUtil.js';
 import DepositUtil from '../utils/DepositUtil.js';
 import AreaRegistry from '../state/AreaRegistry.js';
 import ProxyManager from '../utils/ProxyManager.js';
-import fs from 'fs'; // kept for potential legacy usage (no direct sync reads now) // eslint-disable-line no-unused-vars
+import OreScanner from '../utils/OreScanner.js';
+import BedRegistry from '../state/BedRegistry.js';
+import TaskQueue from '../utils/TaskQueue.js';
+// NOTE: Legacy 'fs' import removed to satisfy lint (unused)
 import fsp from 'fs/promises';
 import path from 'path';
 
-export default class BotController {
+export class BotController {
   static usernameList = null
   static usedNames = new Set()
 
@@ -59,12 +64,13 @@ export default class BotController {
     this.config = config;
     this.bot = null;
     this.mcData = null;
-    this.logger = new Logger();
+  this.logger = new Logger({ botId: this.username || undefined });
     this.behaviors = {};
     this.master = 'RogueZ3phyr';
     this.hungerCheckInterval = null;
     this.coordinator = coordinator; // Shared coordinator for multi-bot sync
     this.instanceId = instanceId; // Bot instance ID for proxy rotation
+    this.shouldReconnect = true; // Allow runtime to disable auto-reconnect when removing
   }
 
   getAvailableUsername() {
@@ -99,9 +105,15 @@ export default class BotController {
         if (!this.username) {
           this.username = this.getAvailableUsername();
         }
+        if (this.logger && typeof this.logger.setBotId === 'function') {
+          this.logger.setBotId(this.username);
+        }
   } catch (_e) {
         console.warn('[BotController] Username list load failed, continuing with fallback username');
         if (!this.username) this.username = 'Bot';
+        if (this.logger && typeof this.logger.setBotId === 'function') {
+          this.logger.setBotId(this.username);
+        }
       }
       // Build bot options
       const botOptions = {
@@ -255,6 +267,17 @@ export default class BotController {
         }
       }, 30000);
 
+      // Register with BotManager early (before behaviors) if available
+      if (this.coordinator && this.coordinator.manager) {
+        try {
+          this.coordinator.manager.registerBot(this.username, this);
+          this.bot.manager = this.coordinator.manager;
+          this.logger.debug('[BotController] Registered with BotManager');
+        } catch (e) {
+          this.logger.warn(`[BotController] BotManager registration failed: ${e.message}`);
+        }
+      }
+
       })().catch(reject);
     });
   }
@@ -266,7 +289,12 @@ export default class BotController {
   }
 
   onSpawn() {
-    console.log(chalk.cyan(figlet.textSync('MineBot', { horizontalLayout: 'full' })));
+  // Show banner; prefix with marker only in dashboard mode so runtime can preserve coloring
+  if (process.env.DASHBOARD_MODE === 'electron') {
+    console.log('[BANNER]', figlet.textSync('MineBot', { horizontalLayout: 'full' }));
+  } else {
+    console.log(figlet.textSync('MineBot', { horizontalLayout: 'full' }));
+  }
     this.logger.info(`Connected to ${this.config.host}:${this.config.port}`);
     this.logger.success('Spawn event detected, initializing data...');
 
@@ -314,6 +342,16 @@ export default class BotController {
     this.toolHandler = new ToolHandler(this.bot, this.logger);
     this.bot.toolHandler = this.toolHandler;
     this.logger.info('[BotController] ToolHandler initialized');
+
+    // Initialize ore scanner for vein mining
+    this.oreScanner = new OreScanner(this.bot, this.logger);
+    this.bot.oreScanner = this.oreScanner;
+    this.logger.info('[BotController] OreScanner initialized');
+
+    // Initialize task queue for sequential task execution
+    this.taskQueue = new TaskQueue(this.bot, this.logger);
+    this.bot.taskQueue = this.taskQueue;
+    this.logger.info('[BotController] TaskQueue initialized');
 
     this.behaviors.deposit = new DepositBehavior(this.bot, this.logger);
     this.bot.depositBehavior = this.behaviors.deposit;
@@ -386,6 +424,7 @@ export default class BotController {
     this.behaviors.look = new LookBehavior(this.bot, lookConfig);
     this.behaviors.look.master = this.master; // Pass master username
     this.behaviors.look.enable(); // enable by default
+    this.bot.lookBehavior = this.behaviors.look; // Make accessible via bot object
     this.logger.info('LookBehavior initialized successfully!');
 
     this.behaviors.chatLogger = new ChatLogger(this.bot, this.logger, BotController.usernameList);
@@ -407,6 +446,7 @@ export default class BotController {
       { bedColor: this.config.behaviors?.sleep?.bedColor || 'red' },
       { look: this.behaviors.look }
     );
+    this.bot.sleepBehavior = this.behaviors.sleep; // make accessible via bot object
 
     this.behaviors.inventory = new InventoryBehavior(this.bot, this.logger);
     this.behaviors.inventory.logInventory();
@@ -425,6 +465,10 @@ export default class BotController {
     this.behaviors.mining = new MiningBehavior(this.bot, this.logger, this.master);
     this.behaviors.mining.setLookBehavior(this.behaviors.look);
     this.logger.info('MiningBehavior initialized successfully!');
+
+    // ItemCollector with look behavior integration
+    this.behaviors.itemCollector.setLookBehavior(this.behaviors.look);
+    this.logger.info('ItemCollector look behavior integrated');
 
     // Home behavior for graceful logout
     this.behaviors.home = new HomeBehavior(this.bot, this.logger);
@@ -473,6 +517,50 @@ export default class BotController {
 
     this.logger.info('All behaviors initialized successfully!');
 
+    // MessageHandler: handle out-of-band manager messages
+    try {
+      this.behaviors.messageHandler = new MessageHandler(this.bot, this.logger, this.master);
+      if (typeof this.behaviors.messageHandler.enable === 'function') this.behaviors.messageHandler.enable();
+      this.logger.info('MessageHandler initialized successfully!');
+    } catch (e) {
+      this.logger.warn(`MessageHandler init failed: ${e.message || e}`);
+    }
+
+    // IdleBehavior: send bot to idle area and wait for tasks or night
+    try {
+      const idleCfg = this.config.behaviors?.idle || {};
+      this.behaviors.idle = new IdleBehavior(this.bot, this.logger, idleCfg);
+      if (typeof this.behaviors.idle.enable === 'function') this.behaviors.idle.enable();
+      this.logger.info('IdleBehavior initialized successfully!');
+    } catch (e) {
+      this.logger.warn(`IdleBehavior init failed: ${e.message || e}`);
+    }
+
+    // Auto bed claim attempt upon spawn (non-sleep claim for ownership; whisper master if none)
+    try {
+      if (this.behaviors.sleep && !this.behaviors.sleep.bedPos) {
+        (async () => {
+          try {
+            const pos = await this.behaviors.sleep.findAvailableBed();
+            if (pos) {
+              this.logger.info(`[AutoBed] Claimed bed at ${pos.x},${pos.y},${pos.z} on spawn`);
+              // Track claimed bed on sleep behavior for later release
+              this.behaviors.sleep.bedPos = pos;
+            } else {
+              // whisper master requesting a bed placement
+              if (this.master && this.bot.chat) {
+                // Use direct chat whisper command to avoid public spam
+                this.bot.chat(`/msg ${this.master} No free bed found near spawn. Please place a ${this.config.behaviors?.sleep?.bedColor || 'red'} bed.`);
+              }
+              this.logger.warn('[AutoBed] No available bed to claim on spawn');
+            }
+          } catch (bedErr) {
+            this.logger.warn(`[AutoBed] Bed claim failed: ${bedErr.message || bedErr}`);
+          }
+        })();
+      }
+    } catch (_) {}
+
     // If proxy is enabled and ipCheckOnStart is true, show the external IP once after spawn
     try {
       const proxyManager = new ProxyManager(this.config, this.logger);
@@ -497,6 +585,17 @@ export default class BotController {
       this.hungerCheckInterval = null;
     }
 
+    // Clear task polling interval if enabled
+    // Disable task polling (clears interval and unregisters manager handler)
+    try {
+      this.disableTaskPolling();
+    } catch (_) {
+      if (this._taskPollTimer) {
+        clearInterval(this._taskPollTimer);
+        this._taskPollTimer = null;
+      }
+    }
+
     // Clear coordinator cleanup interval
     if (this.coordinatorCleanupInterval) {
       clearInterval(this.coordinatorCleanupInterval);
@@ -516,14 +615,29 @@ export default class BotController {
     // Clear behaviors to prevent references to old bot instance
     this.behaviors = {};
 
+    // Release any claimed bed (best-effort) if sleep behavior tracked one
+    try {
+      const sb = this.bot?.sleepBehavior;
+      if (sb?.claimedBedKey) {
+        BedRegistry.release(sb.claimedBedKey);
+        this.logger.info('[AutoBed] Released bed claim on end');
+      } else if (sb?.bedPos) {
+        // Backward compatibility fallback
+        BedRegistry.release(BedRegistry.toKey(sb.bedPos));
+        this.logger.info('[AutoBed] Released bed claim on end (fallback)');
+      }
+    } catch (_) {}
+
     // Don't remove all listeners as it can cause issues with reconnection
     // Just set bot to null so a new instance can be created
     
     this.bot = null;
 
-    setTimeout(() => {
-      this.start();
-    }, 10000)
+    if (this.shouldReconnect) {
+      setTimeout(() => {
+        this.start();
+      }, 10000)
+    }
   }
 
   // optional: behavior registration helpers
@@ -543,5 +657,114 @@ export default class BotController {
       const b = this.behaviors[name];
       if (b && !b.enabled) b.enable();
     });
+  }
+
+  /**
+   * Enable periodic polling of the task manager so this bot can pull work.
+   * Bots should call this after they are spawned (or BotController can call it
+   * when a manager is available). Claimed tasks are handled by a behavior
+   * named `taskHandler` if present, otherwise a small default handler runs.
+   *
+   * @param {object} taskManager - instance of BotManager
+   * @param {number} intervalMs - poll interval in ms
+   */
+  enableTaskPolling(taskManager, intervalMs = 5000) {
+    if (!taskManager) return;
+    this.taskManager = taskManager;
+    if (this._taskPollTimer) clearInterval(this._taskPollTimer);
+    this._taskPollTimer = null;
+
+    // Handler for incoming manager messages (out-of-band)
+    this._managerMsgHandler = (msg) => {
+      try {
+        if (msg.to && msg.to !== this.username) return; // not for me
+        // If behavior exists to handle manager messages, call it
+        if (this.behaviors.messageHandler && typeof this.behaviors.messageHandler.handleManagerMessage === 'function') {
+          this.behaviors.messageHandler.handleManagerMessage(msg, this);
+          return;
+        }
+        this.logger.info(`[INTERNAL MSG] ${msg.from} -> ${msg.to || 'ALL'}: ${JSON.stringify(msg.payload)}`);
+      } catch (err) {
+        this.logger.warn(`[INTERNAL MSG] handler error: ${err.message || err}`);
+      }
+    };
+    taskManager.on('botMessage', this._managerMsgHandler);
+
+    const pollFn = async () => {
+      try {
+        if (!this.bot || !this.bot.entity) return;
+        const task = this.taskManager.claimNextTask(this.username);
+        if (!task) return;
+
+        this.logger.info(`[TASK] ${this.username} claimed ${task.id} (${task.type})`);
+
+        // If a taskHandler behavior exists, delegate execution
+        if (this.behaviors.taskHandler && typeof this.behaviors.taskHandler.handleTask === 'function') {
+          try {
+            await this.behaviors.taskHandler.handleTask(task, this);
+          } catch (err) {
+            this.logger.error(`[TASK] handler error for ${task.id}: ${err.message || err}`);
+            // release so others can pick it up
+            this.taskManager.releaseTask(this.username, task.id);
+            return;
+          }
+        } else {
+          // Default lightweight handlers for demo purposes
+          try {
+                // Avoid using public in-game chat by default to prevent spam/kicks.
+                // If config allows in-game chat, use it; otherwise forward to master via manager.
+                if (task.type === 'chat') {
+                  const msg = String(task.payload?.message || '');
+                  const allowChat = !!(this.config?.allowInGameChat === true);
+                  if (allowChat && this.bot.chat) {
+                    this.bot.chat(msg);
+                  } else if (this.taskManager) {
+                    // send out-of-band to master (or broadcast if no master set)
+                    const target = this.master || null;
+                    this.taskManager.sendBotMessage(this.username, target, { type: 'chat', message: msg });
+                  } else {
+                    this.logger.info(`[TASK] ${this.username} would send chat: ${msg}`);
+                  }
+                } else if (task.type === 'log') {
+                  this.logger.info(`[TASK-LOG] ${this.username}: ${JSON.stringify(task.payload)}`);
+                } else {
+                  this.logger.info(`[TASK] ${this.username} received unknown task type '${task.type}'`);
+                }
+          } catch (err) {
+            this.logger.error(`[TASK] default handler failed for ${task.id}: ${err.message || err}`);
+            this.taskManager.releaseTask(this.username, task.id);
+            return;
+          }
+        }
+
+        // Mark complete
+        try {
+          this.taskManager.completeTask(this.username, task.id);
+        } catch (err) {
+          this.logger.error(`[TASK] failed to complete ${task.id}: ${err.message || err}`);
+        }
+      } catch (err) {
+        this.logger.error(`[TASK-POLL] error: ${err.message || err}`);
+      }
+    };
+
+    // Start interval and run immediately
+    this._taskPollTimer = setInterval(pollFn, intervalMs);
+    // run once immediately
+    setImmediate(pollFn);
+  }
+
+  disableTaskPolling() {
+    if (this._taskPollTimer) {
+      clearInterval(this._taskPollTimer);
+      this._taskPollTimer = null;
+    }
+    this.taskManager = null;
+    if (this._managerMsgHandler && this.taskManager) {
+      try {
+        this.taskManager.off('botMessage', this._managerMsgHandler);
+      } catch (_) {}
+      this._managerMsgHandler = null;
+    }
   }
 }

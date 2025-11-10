@@ -521,6 +521,19 @@ export default class WoodCuttingBehavior {
         if (!b || !this._isLog(b)) continue;
         const dist = this.bot.entity.position.distanceTo(p);
         if (dist <= 4.9) {
+          // Try to claim this log first
+          let claimed = true;
+          if (this.bot.coordinator) {
+            claimed = false;
+            for (let i = 0; i < 2; i++) {
+              try {
+                const ok = await this.bot.coordinator.claimBlock(this.bot.username, new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)), 'woodcutting');
+                if (ok) { claimed = true; break; }
+              } catch (_) {}
+              await new Promise(r => setTimeout(r, 100));
+            }
+          }
+          if (!claimed) continue;
           try {
             // Use ToolHandler for smart tool selection if available
             if (this.bot.toolHandler) {
@@ -535,6 +548,8 @@ export default class WoodCuttingBehavior {
             await new Promise(r => setTimeout(r, this.settings.logBreakDelayMs));
           } catch (_e) {
             // ignore per-block failures
+          } finally {
+            try { if (this.bot.coordinator) await this.bot.coordinator.releaseBlock(this.bot.username, new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z))); } catch(_) {}
           }
         }
       }
@@ -625,16 +640,36 @@ export default class WoodCuttingBehavior {
       // 1) Break base log from the side
       const baseLog = this.bot.blockAt(basePos);
       if (baseLog && this._isLog(baseLog)) {
-        // Use ToolHandler for smart tool selection if available
-        if (this.bot.toolHandler) {
-          await this.bot.toolHandler.smartDig(baseLog);
-        } else {
-          // Fallback to manual axe method
-          if (hasAxe && this.currentAxe) await this.bot.equip(this.currentAxe, 'hand');
-          await this.bot.dig(baseLog);
+        // Try to claim the base log before breaking
+        let baseClaimed = true;
+        if (this.bot.coordinator) {
+          baseClaimed = false;
+          for (let i = 0; i < 3; i++) {
+            try {
+              const ok = await this.bot.coordinator.claimBlock(this.bot.username, new Vec3(Math.floor(basePos.x), Math.floor(basePos.y), Math.floor(basePos.z)), 'woodcutting');
+              if (ok) { baseClaimed = true; break; }
+            } catch (_) {}
+            await new Promise(r => setTimeout(r, 120));
+          }
         }
-        harvestedCount++;
-        await new Promise(r => setTimeout(r, this.settings.baseBreakDelayMs));
+        if (!baseClaimed) {
+          this._emitDebug('Base log claimed by another bot, skipping tree', basePos);
+        } else {
+          try {
+            // Use ToolHandler for smart tool selection if available
+            if (this.bot.toolHandler) {
+              await this.bot.toolHandler.smartDig(baseLog);
+            } else {
+              // Fallback to manual axe method
+              if (hasAxe && this.currentAxe) await this.bot.equip(this.currentAxe, 'hand');
+              await this.bot.dig(baseLog);
+            }
+            harvestedCount++;
+            await new Promise(r => setTimeout(r, this.settings.baseBreakDelayMs));
+          } finally {
+            try { if (this.bot.coordinator) await this.bot.coordinator.releaseBlock(this.bot.username, new Vec3(Math.floor(basePos.x), Math.floor(basePos.y), Math.floor(basePos.z))); } catch(_) {}
+          }
+        }
       }
 
       // 2) Break the first 5 logs (base already broken counts as first)
@@ -649,6 +684,19 @@ export default class WoodCuttingBehavior {
         }
         const blockNow = this.bot.blockAt(p);
         if (blockNow && this._isLog(blockNow)) {
+          // Try to claim this log before breaking
+          let claimed = true;
+          if (this.bot.coordinator) {
+            claimed = false;
+            for (let i = 0; i < 2; i++) {
+              try {
+                const ok = await this.bot.coordinator.claimBlock(this.bot.username, new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)), 'woodcutting');
+                if (ok) { claimed = true; break; }
+              } catch (_) {}
+              await new Promise(r => setTimeout(r, 100));
+            }
+          }
+          if (!claimed) continue;
           try {
             // Use ToolHandler for smart tool selection if available
             if (this.bot.toolHandler) {
@@ -660,7 +708,9 @@ export default class WoodCuttingBehavior {
             }
             harvestedCount++;
             await new Promise(r => setTimeout(r, this.settings.logBreakDelayMs));
-          } catch (_) {}
+          } finally {
+            try { if (this.bot.coordinator) await this.bot.coordinator.releaseBlock(this.bot.username, new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z))); } catch(_) {}
+          }
         }
       }
 
@@ -805,7 +855,7 @@ export default class WoodCuttingBehavior {
     if (!this.bot.itemCollector) return;
     
     try {
-      await this.bot.itemCollector.collectOnce({ radius: radius });
+      await this.bot.itemCollector.collectOnce({ radius: radius, force: true });
   } catch (_e) {
       this._emitDebug('Failed to collect items:', _e?.message || _e);
     }
@@ -920,44 +970,63 @@ export default class WoodCuttingBehavior {
       this._emitDebug('No axe in inventory, will attempt to retrieve from tool chest when needed');
     }
 
-    // Assign work zone if coordinator is available and area is set
+    // Assign work zone using pendingWoodStartGroup to prevent swarming
     let workArea = area;
     if (area && this.bot.coordinator) {
-      const activeBots = this.bot.coordinator.getAllBotPositions();
-      const botCount = activeBots.length;
-      
-      this._emitDebug(`Detected ${botCount} active bot(s)`);
-      
-      if (botCount > 1) {
-        const existingZone = this.bot.coordinator.getWorkZone(this.bot.username, 'woodcutting');
-        
+      // Build group: prefer pendingWoodStartGroup, fallback to bots already working, else single
+      let group = [];
+      try {
+        if (Array.isArray(this.bot.pendingWoodStartGroup) && this.bot.pendingWoodStartGroup.length) {
+          group = this.bot.pendingWoodStartGroup.slice().map(b => String(b));
+        } else {
+          for (const [botId, entry] of this.bot.coordinator.bots.entries()) {
+            const b = entry.bot;
+            if (b?.behaviors?.woodcutting?.isWorking) group.push(botId);
+          }
+          if (!group.includes(this.bot.username)) group.push(this.bot.username);
+        }
+      } catch (_) { group = [this.bot.username]; }
+
+      const subdivideMin = this.bot.config?.behaviors?.woodcutting?.subdivideMinBots ?? 2;
+      const ordered = group.slice().sort((a,b)=>a.localeCompare(b));
+      const myIndex = ordered.indexOf(this.bot.username);
+      const groupCount = ordered.length;
+      this._emitDebug(`Wood group (count=${groupCount}, subdivideMin=${subdivideMin}): ${JSON.stringify(ordered)}`);
+
+      const existingZone = this.bot.coordinator.getWorkZone(this.bot.username, 'woodcutting');
+      if (groupCount >= subdivideMin) {
         if (existingZone) {
           workArea = existingZone;
           this._emitDebug('Using existing work zone assignment');
-        } else {
-          const botIds = activeBots.map(b => b.botId).sort();
-          const myIndex = botIds.indexOf(this.bot.username);
-          
-          if (myIndex >= 0) {
-            const zones = this.bot.coordinator.divideArea(area, botCount, this.bot.username);
-            if (myIndex < zones.length) {
-              workArea = zones[myIndex];
-              this.bot.coordinator.assignWorkZone(this.bot.username, 'woodcutting', workArea);
-              this._emitDebug(`Assigned to work zone ${myIndex + 1}/${botCount}`);
-            }
+        } else if (myIndex >= 0) {
+          let zones = [];
+          try { zones = this.bot.coordinator.divideArea(area, groupCount, this.bot.username) || []; } catch (_) { zones = []; }
+          if (zones.length && myIndex < zones.length) {
+            workArea = zones[myIndex];
+            this.bot.coordinator.assignWorkZone(this.bot.username, 'woodcutting', workArea);
+            this._emitDebug(`Assigned to work zone ${myIndex + 1}/${groupCount}`);
+          } else {
+            this._emitDebug('Subdivision failed or zones empty - using full area');
           }
         }
+      } else {
+        this._emitDebug('Subdivision skipped (below threshold) - using full area');
       }
     }
 
     // Add staggered start delay to prevent all bots from scanning simultaneously
     if (this.bot.coordinator) {
-      const activeBots = this.bot.coordinator.getAllBotPositions();
-      const botIds = activeBots.map(b => b.botId).sort();
+      let botIds = [];
+      try {
+        if (Array.isArray(this.bot.pendingWoodStartGroup) && this.bot.pendingWoodStartGroup.length) {
+          botIds = this.bot.pendingWoodStartGroup.slice().sort((a,b)=>a.localeCompare(b));
+        } else {
+          botIds = [this.bot.username];
+        }
+      } catch (_) { botIds = [this.bot.username]; }
       const myIndex = botIds.indexOf(this.bot.username);
-      
       if (myIndex > 0) {
-        const delay = myIndex * 2000; // 2 second stagger per bot
+        const delay = myIndex * 2000;
         this._emitDebug(`Staggering start by ${delay}ms to reduce load`);
         await new Promise(r => setTimeout(r, delay));
       }

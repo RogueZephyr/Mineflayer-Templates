@@ -13,7 +13,7 @@
     }
   ],
   "rotation": {
-    "enabled": true,
+    "enabled": false,
     "mode": "sequential",
     "_modeOptions": "sequential (cycle through list) | random (pick random each time)",
     "rotateOnRestart": true

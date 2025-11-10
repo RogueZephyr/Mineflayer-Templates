@@ -29,6 +29,15 @@ export default class PathfindingUtil {
   }
 
   /**
+   * Log debug-only messages (only when debug mode is enabled)
+   */
+  _logDebug(message) {
+    if (this.logger && this.bot.config?.debug) {
+      this.logger.debug(`[Pathfinding][${this.bot.username}] ${message}`);
+    }
+  }
+
+  /**
    * Enhanced goto with collision avoidance and optional scaffolding
    * @param {Vec3|Object} pos - Target position
    * @param {number} timeoutMs - Timeout in milliseconds
@@ -42,6 +51,14 @@ export default class PathfindingUtil {
    */
   async goto(pos, timeoutMs = 30000, task = 'generic', range = 1, options = {}) {
     if (!pos) throw new Error('goto: pos required');
+
+    // Pause look behavior during pathfinding
+    const lookBehavior = this.bot.lookBehavior;
+    const wasLookPaused = lookBehavior ? lookBehavior.paused : false;
+    if (lookBehavior && !wasLookPaused) {
+      lookBehavior.pause();
+      this._logDebug('Paused look behavior for pathfinding');
+    }
 
     // Normalize position
     let targetPos = this._normalizePosition(pos);
@@ -123,7 +140,7 @@ export default class PathfindingUtil {
         const goal = new goals.GoalNear(targetPos.x, targetPos.y, targetPos.z, range);
         
         try {
-          await this.bot.pathfinder.goto(goal);
+          await this._withTimeout(this.bot.pathfinder.goto(goal), timeoutMs, 'cached goto');
           await this._waitForSettle(); // Give bot time to settle after pathfinding
         } catch (e) {
           // Cached path failed - invalidate and recalculate
@@ -134,6 +151,12 @@ export default class PathfindingUtil {
           // Always clear goal, even on failure
           if (this.coordinator) {
             this.coordinator.clearPathfindingGoal(this.bot.username);
+          }
+          
+          // Resume look behavior if it was paused by this pathfinding
+          if (lookBehavior && !wasLookPaused) {
+            lookBehavior.resume();
+            this._logDebug('Resumed look behavior after cached pathfinding');
           }
         }
         return;
@@ -146,7 +169,7 @@ export default class PathfindingUtil {
       const pathStart = Date.now();
       
       try {
-        await this.bot.pathfinder.goto(goal);
+        await this._withTimeout(this.bot.pathfinder.goto(goal), timeoutMs, 'goto');
         
         const pathTime = Date.now() - pathStart;
         
@@ -171,6 +194,12 @@ export default class PathfindingUtil {
         if (this.coordinator) {
           this.coordinator.clearPathfindingGoal(this.bot.username);
         }
+        
+        // Resume look behavior if it was paused by this pathfinding
+        if (lookBehavior && !wasLookPaused) {
+          lookBehavior.resume();
+          this._logDebug('Resumed look behavior after pathfinding');
+        }
       }
     } catch (e) {
       // Restore movements on error
@@ -182,6 +211,13 @@ export default class PathfindingUtil {
       if (this.coordinator) {
         this.coordinator.clearPathfindingGoal(this.bot.username);
       }
+      
+      // Resume look behavior on error
+      if (lookBehavior && !wasLookPaused) {
+        lookBehavior.resume();
+        this._logDebug('Resumed look behavior after pathfinding error');
+      }
+      
       throw e;
     }
   }
@@ -329,6 +365,20 @@ export default class PathfindingUtil {
   clearCache() {
     this.pathCache.clear();
     this._log('Path cache cleared');
+  }
+
+  /**
+   * Wrap a promise with a timeout that rejects if exceeded.
+   * @param {Promise<any>} promise
+   * @param {number} ms
+   * @param {string} label
+   */
+  _withTimeout(promise, ms = 30000, label = 'operation') {
+    if (!Number.isFinite(ms) || ms <= 0) return promise;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+    ]);
   }
 
   /**

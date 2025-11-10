@@ -1,8 +1,13 @@
 import mcDataLoader from 'minecraft-data';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
-const foodPath = path.resolve('./src/config/foodList.json');
+// Use absolute path from this file's location
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const foodPath = path.join(__dirname, '..', 'config', 'foodList.json');
 const foodList = JSON.parse(fs.readFileSync(foodPath, 'utf-8'));
 
 export default class EatBehavior {

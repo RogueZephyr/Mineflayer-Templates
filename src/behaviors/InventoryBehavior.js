@@ -6,12 +6,17 @@ const { Movements, goals } = pkg;
 const { GoalNear } = goals;
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 import { Vec3 } from 'vec3';
 
 const logLabel = chalk.green('[Inventory]');
 
-const categoriesPath = path.resolve('./src/config/itemCategories.json');
+// Use absolute path from this file's location
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const categoriesPath = path.join(__dirname, '..', 'config', 'itemCategories.json');
 const itemCategories = JSON.parse(fs.readFileSync(categoriesPath, 'utf-8'));
 
 export default class InventoryBehavior {
