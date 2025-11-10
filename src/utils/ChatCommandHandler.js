@@ -245,7 +245,7 @@ export default class ChatCommandHandler {
             await this.handleMessage(chatData.username, chatData.message, false);
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // Silent fail - this is just a fallback for custom formats
       }
     };
@@ -522,6 +522,8 @@ export default class ChatCommandHandler {
         const handler = this.commands.get(commandName);
         // allow async handlers, pass remaining args after bot name filtering
         const res = handler.call(this, username, remainingArgs, isPrivate);
+        // Mark last command time for background task deferral logic
+        try { this.bot.lastCommandAt = Date.now(); } catch (_) {}
         if (res instanceof Promise) await res.catch(err => this.logger.error(`[Cmd:${commandName}] ${err.message || err}`));
       } catch (err) {
         this.logger.error(`[Cmd:${commandName}] Handler threw: ${err.message || err}`);
@@ -542,6 +544,42 @@ export default class ChatCommandHandler {
     // 🧠 Basic
     this.register('ping', (username, args, isPrivate) => {
       this.reply(username, 'Pong!', isPrivate);
+    });
+
+    // Bot Manager (Phase A.1) - minimal control & inspection
+    this.register('manager', (username, args, isPrivate) => {
+      const mgr = this.bot.manager;
+      const sub = (args[0] || '').toLowerCase();
+      if (!mgr) {
+        return this.reply(username, 'BotManager not initialized', isPrivate);
+      }
+      if (sub === 'status') {
+        const status = mgr.getStatus();
+        const leader = status.leader || 'none';
+        const onlineCount = status.workers.filter(w => w.online).length;
+        return this.reply(username, `Leader: ${leader} | Online: ${onlineCount}/${status.workers.length}`, isPrivate);
+      }
+      if (sub === 'list') {
+        const workers = mgr.getStatus().workers;
+        if (workers.length === 0) return this.reply(username, 'No workers registered', isPrivate);
+        for (const w of workers) {
+          const up = w.uptimeSec;
+          let upStr;
+          if (up < 60) upStr = `${up}s`; else if (up < 3600) upStr = `${Math.floor(up/60)}m ${up%60}s`; else upStr = `${Math.floor(up/3600)}h ${Math.floor((up%3600)/60)}m`;
+          this.reply(username, `${w.name}: ${w.online ? 'online' : 'offline'} (uptime ${upStr})`, isPrivate);
+        }
+        return;
+      }
+      if (sub === 'leader') {
+        const leader = mgr.getLeader();
+        return this.reply(username, `Leader: ${leader?.name || 'none'}`, isPrivate);
+      }
+      if (sub === 'elect') {
+        mgr.forceReelection();
+        const leader = mgr.getLeader();
+        return this.reply(username, `Re-elected leader: ${leader?.name || 'none'}`, isPrivate);
+      }
+      return this.reply(username, 'Usage: !manager status | list | leader | elect', isPrivate);
     });
 
     this.register('help', async (username, args, isPrivate) => {
@@ -598,7 +636,7 @@ export default class ChatCommandHandler {
       } else if (cmd === 'farm') {
         helpMsg.length = 0;
         helpMsg.push('=== Farming Commands ===');
-        helpMsg.push('!farm start - Start farming');
+        helpMsg.push('!farm start [-b N] - Start farming (default 1 bot, use -b N for multiple)');
         helpMsg.push('!farm stop - Stop farming');
         helpMsg.push('Set area with:');
         helpMsg.push('  !setarea farm start/end');
@@ -762,6 +800,12 @@ export default class ChatCommandHandler {
       
       // Stop all active behaviors
       let stoppedTasks = [];
+      
+      if (this.behaviors.mining && this.behaviors.mining.isWorking) {
+        this.behaviors.mining.stopMining();
+        stoppedTasks.push('mining');
+      }
+      
       if (this.behaviors.farm && this.behaviors.farm.isWorking) {
         this.behaviors.farm.disable();
         stoppedTasks.push('farming');
@@ -813,7 +857,15 @@ export default class ChatCommandHandler {
         this.reply(username, 'Home behavior not available', isPrivate);
         return;
       }
-      this.reply(username, 'Going home...', isPrivate);
+      
+      // Stop mining if in progress
+      if (this.behaviors.mining && this.behaviors.mining.isWorking) {
+        this.behaviors.mining.stopMining();
+        this.reply(username, 'Stopping mining and going home...', isPrivate);
+      } else {
+        this.reply(username, 'Going home...', isPrivate);
+      }
+      
       const success = await this.behaviors.home.goHome();
       if (success) {
         this.reply(username, 'Arrived at home!', isPrivate);
@@ -855,13 +907,13 @@ export default class ChatCommandHandler {
     });
 
     // 🛏️ Sleep
-    this.register('sleep', async (username) => {
+  this.register('sleep', async (_username) => {
       if (!this.behaviors.sleep) return;
       await this.behaviors.sleep.sleep();
     });
 
     // 🧺 Inventory
-    this.register('loginv', (username) => {
+  this.register('loginv', (_username) => {
       if (!this.behaviors.inventory) return;
       this.behaviors.inventory.logInventory();
     });
@@ -953,7 +1005,7 @@ export default class ChatCommandHandler {
     });
 
     // 📦 Deposit all items (tries nearest chest first, then categorized chests)
-    this.register('depositall', async (username, args, isPrivate) => {
+  this.register('depositall', async (username, _args, _isPrivate) => {
       // Try DepositUtil first (nearest chest)
       if (this.bot.depositUtil) {
         try {
@@ -1191,7 +1243,7 @@ export default class ChatCommandHandler {
       }
     });
 
-    // 🌾 Farming Commands
+  // 🌾 Farming Commands
     this.register('farm', async (username, args, isPrivate) => {
         if (!this.behaviors.farm) {
             this.reply(username, "Farming behavior not available", isPrivate);
@@ -1199,44 +1251,168 @@ export default class ChatCommandHandler {
         }
 
         const subCommand = args[0]?.toLowerCase();
+        // Group management subcommands (manager only, leader only)
+        if (['add','remove','group'].includes(subCommand)) {
+          if (!this.bot.manager) { this.reply(username, 'Group management requires manager active.', isPrivate); return; }
+            const leader = this.bot.manager.getLeader?.()?.name;
+            if (leader && leader.toLowerCase() !== this.bot.username.toLowerCase()) { this.reply(username, `Leader is ${leader}; only leader can manage farm group.`, isPrivate); return; }
+          if (subCommand === 'group') {
+            const group = this.bot.coordinator?.getGroup('farm') || [];
+            this.reply(username, `Farm group (${group.length}): ${group.join(', ') || 'none'}`, isPrivate);
+            return;
+          }
+          const namePattern = /^[a-zA-Z0-9_-]+$/;
+          const targetsRaw = args.slice(1);
+          const targets = targetsRaw.filter(n => namePattern.test(n));
+          if (!targets.length) { this.reply(username, `Usage: !farm ${subCommand} <bot1> [bot2...]`, isPrivate); return; }
+          const rejected = targetsRaw.filter(n => !namePattern.test(n));
+          if (rejected.length) this.reply(username, `Ignored invalid: ${rejected.join(', ')}`, isPrivate);
+          const payload = { type: 'farm-command', action: subCommand === 'add' ? 'add' : 'remove', bots: targets };
+          this.bot.manager.sendBotMessage(this.bot.username, null, payload);
+          // Confirmation will come after manager redistributes; show immediate intent
+          const group = this.bot.coordinator?.getGroup('farm') || [];
+          this.reply(username, `${subCommand === 'add' ? 'Adding' : 'Removing'} farm bots: ${targets.join(', ')} (prev size ${group.length})`, isPrivate);
+          return;
+        }
+
+        // Parse optional -b N flag (bot count) from args for 'start'
+        let requestedBots = 1;
+        if (subCommand === 'start') {
+          // Look for pattern -b <number>
+          const bIndex = args.findIndex(a => /^-b$/i.test(a));
+          if (bIndex !== -1 && args[bIndex + 1]) {
+            const n = parseInt(args[bIndex + 1], 10);
+            if (Number.isFinite(n) && n > 0) requestedBots = Math.min(n, 20); // safety cap
+          }
+        }
+
+        // Helper: broadcast manager message instructing farm start/stop to specific bot list
+        const sendManagerFarmCommand = (action, botNames) => {
+          if (!this.bot.manager) return false;
+          const payload = { type: 'farm-command', action, bots: botNames };
+          // send as broadcast; individual bots will filter
+          this.bot.manager.sendBotMessage(this.bot.username, null, payload);
+          return true;
+        };
 
         switch (subCommand) {
             case 'start':
-                // Load area from registry if not cached
+                // Manager-coordinated multi-bot start
+                if (this.bot.manager) {
+                  const leader = this.bot.manager.getLeader?.()?.name;
+                  if (leader && leader.toLowerCase() !== this.bot.username.toLowerCase()) {
+                    // Non-leader: ignore and let leader coordinate
+                    this.logger.info(`[${this.bot.username}] Deferring farm start to leader ${leader}`);
+                    break;
+                  }
+                  // Determine candidate bots (online workers)
+                  const workers = this.bot.manager.getWorkers().filter(w => w.online);
+                  if (workers.length === 0) {
+                    this.reply(username, 'No online bots available for farming', isPrivate);
+                    break;
+                  }
+                  // Use manager idle predicate instead of peeking into behaviors
+                  const idleBots = workers.filter(w => {
+                    try { return this.bot.manager.isWorkerIdle(w.name); } catch (_) { return true; }
+                  });
+                  if (idleBots.length === 0) {
+                    this.reply(username, 'All bots already farming', isPrivate);
+                    break;
+                  }
+                  const selected = idleBots.slice(0, requestedBots).map(w => w.name);
+                  // Verify area exists before broadcasting
+                  const area = await this.bot.areaRegistry?.getArea('farm').catch(() => null);
+                  if (!area) {
+                    this.reply(username, 'No farm area set. Use !setarea farm start/end first.', isPrivate);
+                    break;
+                  }
+                  sendManagerFarmCommand('start', selected);
+
+                  // Wait briefly for farm-status responses and summarize
+                  const results = await this._collectFarmStatus(1500, selected);
+                  const ok = results.filter(r => r.success).map(r => r.bot);
+                  const fail = results.filter(r => !r.success).map(r => `${r.bot}${r.code ? `(${r.code})` : ''}`);
+                  if (ok.length) this.reply(username, `Farming started: ${ok.join(', ')}`, isPrivate);
+                  if (fail.length) this.reply(username, `Failed/ignored: ${fail.join(', ')}`, isPrivate);
+                  if (!ok.length && !fail.length) this.reply(username, `Requested farming start for ${selected.length} bot(s): ${selected.join(', ')} (pending)`, isPrivate);
+                  break;
+                }
+                // Single bot fallback (no manager)
                 if (!this.behaviors.farm.farmingArea && this.bot.areaRegistry) {
                   this.behaviors.farm.farmingArea = await this.bot.areaRegistry.getArea('farm');
                 }
-                
                 if (!this.behaviors.farm.farmingArea) {
-                    this.bot.chat("No farming area set! Use !setarea farm start/end");
-                    return;
+                  this.bot.chat('No farming area set! Use !setarea farm start/end');
+                  break;
                 }
-                // ensure behavior is enabled before starting
                 if (!this.behaviors.farm.enabled && typeof this.behaviors.farm.enable === 'function') {
                   this.behaviors.farm.enable();
                 }
-                this.bot.chat("Starting farming routine...");
+                this.bot.chat('Starting farming routine (single bot mode)...');
                 await this.behaviors.farm.startFarming(this.behaviors.farm.farmingArea);
                 break;
 
             case 'stop':
-                // Force stop farming
+                if (this.bot.manager) {
+                  const leader = this.bot.manager.getLeader?.()?.name;
+                  if (leader && leader.toLowerCase() !== this.bot.username.toLowerCase()) {
+                    this.logger.info(`[${this.bot.username}] Deferring farm stop to leader ${leader}`);
+                    break;
+                  }
+                  // Manager broadcast stop for all bots or targeted ones (optional: parse names after 'stop')
+                  const targetNames = args.slice(1).filter(a => /^[a-zA-Z0-9_]+$/.test(a));
+                  sendManagerFarmCommand('stop', targetNames.length ? targetNames : null);
+                  // Briefly collect stop acknowledgements
+                  const expected = targetNames.length ? targetNames : this.bot.manager.getWorkers().filter(w=>w.online).map(w=>w.name);
+                  const results = await this._collectFarmStatus(1000, expected);
+                  const stopped = results.filter(r => r.success && r.code === 'stopped').map(r => r.bot);
+                  if (stopped.length) this.reply(username, `Stopped: ${stopped.join(', ')}`, isPrivate);
+                  else this.reply(username, `Requested farming stop${targetNames.length ? ' for ' + targetNames.join(', ') : ' (all bots)'}`, isPrivate);
+                  break;
+                }
                 this.behaviors.farm.isWorking = false;
                 this.behaviors.farm.disable();
-                
-                // Stop pathfinder
                 if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') {
                   this.bot.pathfinder.setGoal(null);
                 }
-                
-                this.bot.chat("Stopped farming");
+                this.bot.chat('Stopped farming');
                 break;
 
             default:
-                this.bot.chat("Usage: !farm <start|stop>");
-                this.bot.chat("Set area first: !setarea farm start, then !setarea farm end");
+                this.bot.chat('Usage: !farm <start|stop> [-b N]');
+                this.bot.chat('Set area first: !setarea farm start, then !setarea farm end');
+                this.bot.chat('Default assigns 1 bot; use -b N with manager for multi-bot');
         }
     });
+
+    // Internal helper: aggregate farm-status messages for a short window
+    this._collectFarmStatus = (timeoutMs, expectedBots=[]) => {
+      return new Promise((resolve) => {
+        const results = [];
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve(results);
+        }, Math.max(300, timeoutMs || 1000));
+
+        const handler = (msg) => {
+          try {
+            const p = msg?.payload || {};
+            if (p.type !== 'farm-status') return;
+            const bot = msg.from;
+            if (expectedBots.length && !expectedBots.map(b => b.toLowerCase()).includes(String(bot).toLowerCase())) return;
+            results.push({ bot, success: !!p.success, code: p.code });
+          } catch (_) {}
+        };
+
+        const mgr = this.bot.manager;
+        if (!mgr) return resolve([]);
+        mgr.on('botMessage', handler);
+        const cleanup = () => {
+          try { mgr.off('botMessage', handler); } catch (_) {}
+          clearTimeout(timer);
+        };
+      });
+    };
 
     // 🪓 Woodcutting Commands
     this.register('wood', async (username, args, isPrivate) => {
@@ -1246,6 +1422,27 @@ export default class ChatCommandHandler {
         }
 
         const subCommand = args[0]?.toLowerCase();
+        if (['add','remove','group'].includes(subCommand)) {
+          if (!this.bot.manager) { this.reply(username, 'Group management requires manager active.', isPrivate); return; }
+          const leader = this.bot.manager.getLeader?.()?.name;
+          if (leader && leader.toLowerCase() !== this.bot.username.toLowerCase()) { this.reply(username, `Leader is ${leader}; only leader can manage wood group.`, isPrivate); return; }
+          if (subCommand === 'group') {
+            const group = this.bot.coordinator?.getGroup('wood') || [];
+            this.reply(username, `Wood group (${group.length}): ${group.join(', ') || 'none'}`, isPrivate);
+            return;
+          }
+          const namePattern = /^[a-zA-Z0-9_-]+$/;
+          const targetsRaw = args.slice(1);
+          const targets = targetsRaw.filter(n => namePattern.test(n));
+          if (!targets.length) { this.reply(username, `Usage: !wood ${subCommand} <bot1> [bot2...]`, isPrivate); return; }
+          const rejected = targetsRaw.filter(n => !namePattern.test(n));
+          if (rejected.length) this.reply(username, `Ignored invalid: ${rejected.join(', ')}`, isPrivate);
+          const payload = { type: 'wood-command', action: subCommand === 'add' ? 'add' : 'remove', bots: targets };
+          this.bot.manager.sendBotMessage(this.bot.username, null, payload);
+          const group = this.bot.coordinator?.getGroup('wood') || [];
+          this.reply(username, `${subCommand === 'add' ? 'Adding' : 'Removing'} wood bots: ${targets.join(', ')} (prev size ${group.length})`, isPrivate);
+          return;
+        }
 
         switch (subCommand) {
             case 'start':
@@ -1289,11 +1486,379 @@ export default class ChatCommandHandler {
         }
     });
 
+    // 🌲 Woodcutting Commands (manager-aware)
+    this.register('wood', async (username, args, isPrivate) => {
+        if (!this.behaviors.woodcutting) {
+            this.reply(username, "Woodcutting behavior not available", isPrivate);
+            return;
+        }
+
+        const sub = (args[0] || '').toLowerCase();
+
+        // Manager-coordinated: !wood start|stop [-b N]
+        if (sub === 'start' || sub === 'stop') {
+          const action = sub;
+          let requestedBots = 1;
+          if (action === 'start') {
+            const bIndex = args.findIndex(a => /^-b$/i.test(a));
+            if (bIndex !== -1 && args[bIndex + 1]) {
+              const n = parseInt(args[bIndex + 1], 10);
+              if (Number.isFinite(n) && n > 0) requestedBots = Math.min(n, 20);
+            }
+          }
+
+          // helper to broadcast wood-command
+          const sendManagerWoodCommand = (action, botNames) => {
+            if (!this.bot.manager) return false;
+            const payload = { type: 'wood-command', action, bots: botNames };
+            this.bot.manager.sendBotMessage(this.bot.username, null, payload);
+            return true;
+          };
+
+          // status aggregation
+          const collectWoodStatus = (timeoutMs, expectedBots=[]) => new Promise(resolve => {
+            const results = [];
+            const timer = setTimeout(() => { cleanup(); resolve(results); }, Math.max(300, timeoutMs || 1000));
+            const handler = (msg) => {
+              try {
+                const p = msg?.payload || {};
+                if (p.type !== 'wood-status') return;
+                const bot = msg.from;
+                if (expectedBots.length && !expectedBots.map(b => b.toLowerCase()).includes(String(bot).toLowerCase())) return;
+                results.push({ bot, success: !!p.success, code: p.code });
+              } catch (_) {}
+            };
+            const mgr = this.bot.manager; if (!mgr) return resolve([]);
+            mgr.on('botMessage', handler);
+            const cleanup = () => { try { mgr.off('botMessage', handler); } catch (_) {} clearTimeout(timer); };
+          });
+
+          if (this.bot.manager) {
+            const leader = this.bot.manager.getLeader?.()?.name;
+            if (leader && leader.toLowerCase() !== this.bot.username.toLowerCase()) {
+              this.logger.info(`[${this.bot.username}] Deferring wood ${action} to leader ${leader}`);
+              return;
+            }
+            const workers = this.bot.manager.getWorkers().filter(w=>w.online);
+            if (action === 'start') {
+              if (workers.length === 0) { this.reply(username, 'No online bots available for woodcutting', isPrivate); return; }
+              const idleBots = workers.filter(w => { try { return this.bot.manager.isWorkerIdle(w.name); } catch (_) { return true; } });
+              if (idleBots.length === 0) { this.reply(username, 'All bots are busy', isPrivate); return; }
+              // Preflight area
+              const area = await this.bot.areaRegistry?.getArea('wood').catch(()=>null);
+              if (!area) { this.reply(username, 'No woodcutting area set. Use !setarea wood start/end first.', isPrivate); return; }
+              const selected = idleBots.slice(0, requestedBots).map(w=>w.name);
+              sendManagerWoodCommand('start', selected);
+              const results = await collectWoodStatus(1500, selected);
+              const ok = results.filter(r => r.success).map(r => r.bot);
+              const fail = results.filter(r => !r.success).map(r => `${r.bot}${r.code ? `(${r.code})` : ''}`);
+              if (ok.length) this.reply(username, `Woodcutting started: ${ok.join(', ')}`, isPrivate);
+              if (fail.length) this.reply(username, `Failed/ignored: ${fail.join(', ')}`, isPrivate);
+              if (!ok.length && !fail.length) this.reply(username, `Requested woodcutting start for ${selected.join(', ')}`, isPrivate);
+              return;
+            } else {
+              const targetNames = args.slice(1).filter(a => /^[a-zA-Z0-9_]+$/.test(a));
+              sendManagerWoodCommand('stop', targetNames.length ? targetNames : null);
+              const expected = targetNames.length ? targetNames : this.bot.manager.getWorkers().filter(w=>w.online).map(w=>w.name);
+              const results = await collectWoodStatus(1000, expected);
+              const stopped = results.filter(r => r.success && r.code === 'stopped').map(r => r.bot);
+              if (stopped.length) this.reply(username, `Stopped: ${stopped.join(', ')}`, isPrivate);
+              else this.reply(username, `Requested woodcutting stop${targetNames.length ? ' for ' + targetNames.join(', ') : ' (all bots)'}`, isPrivate);
+              return;
+            }
+          }
+
+          // No manager: local single-bot
+          let woodcuttingArea = null;
+          if (this.bot.areaRegistry) woodcuttingArea = await this.bot.areaRegistry.getArea('wood');
+          if (woodcuttingArea) this.bot.chat(`Starting woodcutting in designated area...`);
+          else this.bot.chat('No woodcutting area set - will search for nearest trees');
+          if (!this.behaviors.woodcutting.enabled && typeof this.behaviors.woodcutting.enable === 'function') this.behaviors.woodcutting.enable();
+          await this.behaviors.woodcutting.startWoodcutting(woodcuttingArea);
+          return;
+        }
+
+        // Legacy wood commands (fallback)
+        switch (sub) {
+          case 'start': // handled above
+          case 'stop': // handled above
+            break;
+          default:
+            this.bot.chat("Usage: !wood <start|stop> [-b N]");
+            this.bot.chat("Optional: Set area with !setarea wood start/end");
+            this.bot.chat("Leader will coordinate multiple bots if manager is active");
+        }
+    });
+
     // ⛏️ Mining Commands
-    this.register('mine', async (username, args, isPrivate) => {
+  this.register('mine', async (username, args, _isPrivate) => {
         if (!this.behaviors.mining) {
             this.bot.chat("Mining behavior not available");
             return;
+        }
+
+        // New protocol: !mine <mode> start|stop [-b N] [params]
+        const maybeMode = (args[0] || '').toLowerCase();
+        const maybeAction = (args[1] || '').toLowerCase();
+  const isNewProtocol = ['start', 'stop','group'].includes(maybeAction) && ['strip','tunnel','quarry','vein'].includes(maybeMode);
+
+        // === Quarry group summary ===
+        // Syntax: !mine quarry group
+        if (maybeMode === 'quarry' && maybeAction === 'group') {
+          const group = this.bot.coordinator?.getGroup('quarry') || [];
+          this.bot.chat(`Quarry group (${group.length}): ${group.join(', ') || 'none'}`);
+          return;
+        }
+
+        // === Quarry dynamic group add/remove ===
+        // Syntax: !mine quarry add <bot1> [bot2...]
+        //         !mine quarry remove <bot1> [bot2...]
+        // Works only when BotManager (multi-bot) is active. Recomputes zones without stopping.
+        if (maybeMode === 'quarry' && ['add','remove'].includes(maybeAction)) {
+          if (!this.bot.manager) {
+            this.bot.chat('Quarry add/remove requires manager (multi-bot mode)');
+            return;
+          }
+          const leader = this.bot.manager.getLeader?.()?.name;
+          if (leader && leader.toLowerCase() !== this.bot.username.toLowerCase()) {
+            this.bot.chat(`Leader is ${leader}; only leader can quarry ${maybeAction}.`);
+            this.logger.info(`[${this.bot.username}] Deferring quarry ${maybeAction} to leader ${leader}`);
+            return; // only leader issues group updates
+          }
+          // Allow letters, digits, underscore, hyphen in bot names (e.g., Subject_9-17)
+          const namePattern = /^[a-zA-Z0-9_-]+$/;
+          const targetBotsRaw = args.slice(2);
+          const targetBots = targetBotsRaw.filter(b => namePattern.test(b));
+          const rejected = targetBotsRaw.filter(b => !namePattern.test(b));
+          if (!targetBots.length) {
+            this.bot.chat(`Usage: !mine quarry ${maybeAction} <bot1> [bot2...]`);
+            return;
+          }
+          if (rejected.length) {
+            this.bot.chat(`Ignored invalid bot name(s): ${rejected.join(', ')}`);
+          }
+          // Optionally verify names exist in manager registry
+          const knownNames = new Set(this.bot.manager.getWorkers().map(w => w.name));
+          const unknown = targetBots.filter(n => !knownNames.has(n));
+          if (unknown.length) {
+            this.bot.chat(`Warning: unknown bot(s) ${unknown.join(', ')} (will attempt anyway)`);
+          }
+          // Determine area + depth: prefer stored lastQuarryArea, else registry 'quarry' area
+          let area = this.bot.lastQuarryArea || null;
+          try {
+            if (!area && this.bot.areaRegistry) area = await this.bot.areaRegistry.getArea('quarry');
+          } catch (_) {}
+          if (!area || !area.start || !area.end) {
+            this.bot.chat('No quarry area known. Start a quarry first or set area with !setarea quarry');
+            return;
+          }
+          const depth = Number.isFinite(this.bot.lastQuarryDepth) ? this.bot.lastQuarryDepth : 5;
+          const x1 = Math.floor(area.start.x); const z1 = Math.floor(area.start.z);
+          const x2 = Math.floor(area.end.x);   const z2 = Math.floor(area.end.z);
+          const rawArgs = [x1, z1, x2, z2, depth];
+          // Broadcast add/remove payload; MessageHandler will recompute and send targeted starts
+          try {
+            const payload = { type: 'mine-command', action: maybeAction, mode: 'quarry', bots: targetBots, rawArgs };
+            this.bot.manager.sendBotMessage(this.bot.username, null, payload);
+            this.bot.chat(`${maybeAction === 'add' ? 'Adding' : 'Removing'} quarry bots: ${targetBots.join(', ')}`);
+          } catch (e) {
+            this.bot.chat(`Failed to ${maybeAction} bots: ${e.message || e}`);
+          }
+          return;
+        }
+
+        // Helper: broadcast manager message for mining
+        const sendManagerMineCommand = (action, botNames, mode, rawArgs) => {
+          if (!this.bot.manager) return false;
+          const payload = { type: 'mine-command', action, mode, rawArgs, bots: botNames };
+          this.bot.manager.sendBotMessage(this.bot.username, null, payload);
+          return true;
+        };
+
+        // Mining status aggregation (similar to farm)
+        const collectMineStatus = (timeoutMs, expectedBots=[]) => {
+          return new Promise((resolve) => {
+            const results = [];
+            const timer = setTimeout(() => { cleanup(); resolve(results); }, Math.max(300, timeoutMs || 1000));
+            const handler = (msg) => {
+              try {
+                const p = msg?.payload || {};
+                if (p.type !== 'mine-status') return;
+                const bot = msg.from;
+                if (expectedBots.length && !expectedBots.map(b => b.toLowerCase()).includes(String(bot).toLowerCase())) return;
+                results.push({ bot, success: !!p.success, code: p.code });
+              } catch (_) {}
+            };
+            const mgr = this.bot.manager; if (!mgr) return resolve([]);
+            mgr.on('botMessage', handler);
+            const cleanup = () => { try { mgr.off('botMessage', handler); } catch (_) {} clearTimeout(timer); };
+          });
+        };
+
+        if (isNewProtocol) {
+          const mode = maybeMode;
+          const action = maybeAction;
+
+          // Parse -b N for manager case
+          let requestedBots = 1;
+          const bIndex = args.findIndex(a => /^-b$/i.test(a));
+          if (bIndex !== -1 && args[bIndex + 1]) {
+            const n = parseInt(args[bIndex + 1], 10); if (Number.isFinite(n) && n > 0) requestedBots = Math.min(n, 20);
+          }
+          // Strip flags from params
+          const params = args.slice(2).filter((a, i) => !(i === bIndex - 2 || i === bIndex - 1));
+
+          // Manager-coordinated path
+          if (this.bot.manager) {
+            const leader = this.bot.manager.getLeader?.()?.name;
+            if (leader && leader.toLowerCase() !== this.bot.username.toLowerCase()) {
+              this.logger.info(`[${this.bot.username}] Deferring mine ${action} to leader ${leader}`);
+              return;
+            }
+            const workers = this.bot.manager.getWorkers().filter(w => w.online);
+            if (action === 'start') {
+              if (workers.length === 0) { this.bot.chat('No online bots available for mining'); return; }
+              const idleBots = workers.filter(w => { try { return this.bot.manager.isWorkerIdle(w.name); } catch (_) { return true; } });
+              if (idleBots.length === 0) { this.bot.chat('All bots are busy'); return; }
+              const selected = idleBots.slice(0, requestedBots).map(w => w.name);
+
+              // Quarry: support runtime add/remove and targeted messages
+              if (mode === 'quarry') {
+                // Expect params: x1 z1 x2 z2 depth
+                if (params.length < 5) { this.bot.chat('Usage: !mine quarry start [-b N] <x1> <z1> <x2> <z2> <depth>'); return; }
+                const x1 = parseInt(params[0]); const z1 = parseInt(params[1]);
+                const x2 = parseInt(params[2]); const z2 = parseInt(params[3]);
+                const depth = parseInt(params[4]) || 5;
+                if (![x1,z1,x2,z2].every(Number.isFinite)) { this.bot.chat('Invalid quarry coordinates'); return; }
+
+                // Build an area and try coordinator division if available
+                const y = Math.floor(this.bot.entity?.position?.y || 64);
+                const area = { start: { x: x1, y, z: z1 }, end: { x: x2, y, z: z2 } };
+                // Persist for dynamic add/remove commands
+                try { this.bot.lastQuarryArea = area; this.bot.lastQuarryDepth = depth; } catch (_) {}
+                let zones = [];
+                try {
+                  if (this.bot.coordinator) zones = this.bot.coordinator.divideArea(area, selected.length, this.bot.username) || [];
+                } catch (_) { zones = []; }
+                if (!zones.length) {
+                  // Fallback manual split along longer axis
+                  const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+                  const minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+                  const width = maxX - minX + 1; const depthZ = maxZ - minZ + 1;
+                  if (width >= depthZ) {
+                    const zoneW = Math.ceil(width / selected.length);
+                    for (let i=0;i<selected.length;i++) {
+                      const zx1 = minX + i*zoneW; const zx2 = Math.min(zx1 + zoneW - 1, maxX);
+                      zones.push({ start: { x: zx1, y, z: minZ }, end: { x: zx2, y, z: maxZ } });
+                    }
+                  } else {
+                    const zoneD = Math.ceil(depthZ / selected.length);
+                    for (let i=0;i<selected.length;i++) {
+                      const zz1 = minZ + i*zoneD; const zz2 = Math.min(zz1 + zoneD - 1, maxZ);
+                      zones.push({ start: { x: minX, y, z: zz1 }, end: { x: maxX, y, z: zz2 } });
+                    }
+                  }
+                }
+
+                // Update coordinator group for quarry and recompute/assign zones centrally
+                try {
+                  if (this.bot.coordinator) {
+                    // set the group so coordinator can track it
+                    this.bot.coordinator.groupRegistry.set('quarry', selected.slice());
+                    const assignments = this.bot.coordinator.recomputeAndAssignZones('quarry', area, selected);
+                    // send per-bot start with assigned zone
+                    for (const a of assignments) {
+                      const payload = { type: 'mine-command', action: 'start', mode: 'quarry', rawArgs: [a.zone.start.x, a.zone.start.z, a.zone.end.x, a.zone.end.z, depth] };
+                      try { this.bot.manager.sendBotMessage(this.bot.username, a.botId, payload); } catch (_) {}
+                    }
+                  } else {
+                    // no coordinator: fallback to targeted sends
+                    for (let i=0;i<selected.length;i++) {
+                      const name = selected[i];
+                      const zone = zones[i] || area;
+                      const zx1 = zone.start.x, zz1 = zone.start.z, zx2 = zone.end.x, zz2 = zone.end.z;
+                      const payload = { type: 'mine-command', action: 'start', mode, rawArgs: [zx1, zz1, zx2, zz2, depth] };
+                      this.bot.manager.sendBotMessage(this.bot.username, name, payload);
+                    }
+                  }
+                } catch (_) {}
+              } else {
+                // Other modes: broadcast one payload to all selected
+                sendManagerMineCommand('start', selected, mode, params);
+              }
+              const results = await collectMineStatus(1500, selected);
+              const ok = results.filter(r => r.success).map(r => r.bot);
+              const fail = results.filter(r => !r.success).map(r => `${r.bot}${r.code ? `(${r.code})` : ''}`);
+              if (ok.length) this.bot.chat(`Mining started (${mode}): ${ok.join(', ')}`);
+              if (fail.length) this.bot.chat(`Failed/ignored: ${fail.join(', ')}`);
+              if (!ok.length && !fail.length) this.bot.chat(`Requested mining start for ${selected.join(', ')} (${mode})`);
+              return;
+            } else if (action === 'stop') {
+              const targetNames = args.slice(2).filter(a => /^[a-zA-Z0-9_]+$/.test(a));
+              sendManagerMineCommand('stop', targetNames.length ? targetNames : null, mode, []);
+              const expected = targetNames.length ? targetNames : this.bot.manager.getWorkers().filter(w=>w.online).map(w=>w.name);
+              const results = await collectMineStatus(1000, expected);
+              const stopped = results.filter(r => r.success && r.code === 'stopped').map(r => r.bot);
+              if (stopped.length) this.bot.chat(`Stopped mining: ${stopped.join(', ')}`);
+              else this.bot.chat(`Requested mining stop${targetNames.length ? ' for ' + targetNames.join(', ') : ' (all bots)'}`);
+              return;
+            }
+          }
+
+          // No manager: execute locally based on mode
+          try {
+            if (!this.behaviors.mining.enabled && typeof this.behaviors.mining.enable === 'function') this.behaviors.mining.enable();
+            switch (mode) {
+              case 'strip': {
+                const direction = params[0] || 'east';
+                const mainLength = parseInt(params[1]) || 100;
+                const numBranches = parseInt(params[2]) || 10;
+                const startPos = this.bot.entity.position.floored();
+                await this.behaviors.mining.startStripMining(startPos, direction, mainLength, numBranches);
+                this.bot.chat('Strip mining complete!');
+                break;
+              }
+              case 'tunnel': {
+                const direction = params[0] || 'east';
+                const length = parseInt(params[1]) || 100;
+                const width = params[2] !== undefined ? parseInt(params[2]) : null;
+                const height = params[3] !== undefined ? parseInt(params[3]) : null;
+                const startPos = this.bot.entity.position.floored();
+                await this.behaviors.mining.startTunnel(startPos, direction, length, Number.isFinite(width)?width:null, Number.isFinite(height)?height:null);
+                this.bot.chat('Tunnel complete!');
+                break;
+              }
+              case 'quarry': {
+                const x1 = parseInt(params[0]); const z1 = parseInt(params[1]); const x2 = parseInt(params[2]); const z2 = parseInt(params[3]); const depth = parseInt(params[4]) || 5;
+                const y = Math.floor(this.bot.entity.position.y);
+                const corner1 = new (await import('vec3')).Vec3(x1, y, z1);
+                const corner2 = new (await import('vec3')).Vec3(x2, y, z2);
+                // Persist for potential future add/remove (single-bot mode mostly irrelevant but keep consistent)
+                try { this.bot.lastQuarryArea = { start: { x: x1, y, z: z1 }, end: { x: x2, y, z: z2 } }; this.bot.lastQuarryDepth = depth; } catch (_) {}
+                await this.behaviors.mining.startQuarry(corner1, corner2, depth);
+                this.bot.chat('Quarry complete!');
+                break;
+              }
+              case 'vein': {
+                const radius = params[0] !== undefined ? parseInt(params[0]) : null;
+                const result = await this.behaviors.mining.startContinuousVeinMining(radius);
+                if (result.success) this.bot.chat(`Vein mining complete! ${result.totalOresMined} ores mined`);
+                else this.bot.chat(`Vein mining stopped: ${result.error || 'Unknown error'}`);
+                break;
+              }
+              case 'stop': {
+                this.behaviors.mining.stopMining();
+                this.behaviors.mining.disable();
+                if (this.bot.pathfinder?.setGoal) this.bot.pathfinder.setGoal(null);
+                this.bot.chat('Stopped mining');
+                break;
+              }
+            }
+          } catch (e) {
+            this.logger.error(`[ChatCommandHandler] Mine ${mode} error: ${e.message || e}`);
+            this.bot.chat(`Mining error: ${e.message || 'Unknown error'}`);
+          }
+          return;
         }
 
         const sub = (args[0] || '').toLowerCase();
@@ -1462,11 +2027,125 @@ export default class ChatCommandHandler {
                     this.bot.chat(`Blocks mined this session: ${blocks}`);
                     break;
                 }
+                
+                case 'vein': {
+                    // !mine vein - Continuous vein mining mode (scans and mines in radius)
+                    // !mine vein <radius> - Continuous vein mining with custom radius
+                    // !mine vein <x> <y> <z> - Mine single vein at specific position (legacy)
+                    if (!this.bot.oreScanner) {
+                        this.bot.chat("Ore scanner not available");
+                        break;
+                    }
+                    
+                    // Check if coordinates provided (legacy single-vein mode)
+                    if (args.length >= 4) {
+                        const x = parseInt(args[1]);
+                        const y = parseInt(args[2]);
+                        const z = parseInt(args[3]);
+                        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+                            // Legacy mode: mine single vein at coordinates
+                            const targetPos = new (await import('vec3')).Vec3(x, y, z);
+                            const block = this.bot.blockAt(targetPos);
+                            if (!block || !this.bot.oreScanner.isOre(block.name)) {
+                                this.bot.chat(`No ore at ${targetPos.x} ${targetPos.y} ${targetPos.z}`);
+                                break;
+                            }
+                            
+                            this.bot.chat(`Mining vein of ${block.name} at ${targetPos.x} ${targetPos.y} ${targetPos.z}...`);
+                            const result = await this.behaviors.mining.mineVeinAt(targetPos);
+                            
+                            if (result.success) {
+                                this.bot.chat(`Vein mined! ${result.minedCount} blocks of ${result.oreType}`);
+                            } else {
+                                this.bot.chat(`Vein mining failed: ${result.error || 'Unknown error'}`);
+                            }
+                            break;
+                        }
+                    }
+                    
+                    // New mode: continuous vein mining
+                    let scanRadius = null;
+                    if (args.length >= 2) {
+                        const radius = parseInt(args[1]);
+                        if (Number.isFinite(radius) && radius > 0 && radius <= 64) {
+                            scanRadius = radius;
+                        } else {
+                            this.bot.chat("Invalid radius (1-64). Usage: !mine vein [radius]");
+                            break;
+                        }
+                    }
+                    
+                    const cfg = this.bot.config?.behaviors?.mining || {};
+                    const defaultRadius = cfg.continuousVeinScanRadius || 32;
+                    const radius = scanRadius || defaultRadius;
+                    
+                    this.bot.chat(`Starting continuous vein mining (radius: ${radius})`);
+                    this.bot.chat("Mining all ores until inventory fills or you send !stop");
+                    
+                    const result = await this.behaviors.mining.startContinuousVeinMining(scanRadius);
+                    
+                    if (result.success) {
+                        this.bot.chat(`Vein mining complete! ${result.totalOresMined} ores mined in ${result.scanIterations} scans (${result.duration}s)`);
+                    } else {
+                        this.bot.chat(`Vein mining stopped: ${result.error || 'Unknown error'}`);
+                    }
+                    break;
+                }
+                
+                case 'scan': {
+                    // !mine scan - Scan for ore vein at cursor
+                    // !mine scan <x> <y> <z> - Scan at specific position
+                    if (!this.bot.oreScanner) {
+                        this.bot.chat("Ore scanner not available");
+                        break;
+                    }
+                    
+                    let targetPos;
+                    if (args.length >= 4) {
+                        const x = parseInt(args[1]);
+                        const y = parseInt(args[2]);
+                        const z = parseInt(args[3]);
+                        targetPos = new (await import('vec3')).Vec3(x, y, z);
+                    } else {
+                        const block = this.bot.blockAtCursor(5);
+                        if (!block) {
+                            this.bot.chat("No block in sight");
+                            break;
+                        }
+                        targetPos = block.position;
+                    }
+                    
+                    const block = this.bot.blockAt(targetPos);
+                    if (!block || !this.bot.oreScanner.isOre(block.name)) {
+                        this.bot.chat(`No ore at position (block: ${block?.name || 'none'})`);
+                        break;
+                    }
+                    
+                    this.bot.chat(`Scanning vein of ${block.name}...`);
+                    
+                    const cfg = this.bot.config?.behaviors?.mining || {};
+                    const result = await this.bot.oreScanner.scanVein(targetPos, {
+                        maxBlocks: cfg.veinMaxBlocks || 64,
+                        maxDistance: cfg.veinSearchRadius || 16
+                    });
+                    
+                    this.bot.chat(`Found ${result.count} ${result.oreType} blocks`);
+                    if (result.count > 0) {
+                        const closest = result.blocks[0];
+                        const farthest = result.blocks[result.blocks.length - 1];
+                        this.bot.chat(`Closest: ${closest.distance.toFixed(1)}m, Farthest: ${farthest.distance.toFixed(1)}m`);
+                        const estimatedTime = this.bot.oreScanner.estimateMiningTime(result.count);
+                        this.bot.chat(`Est. mining time: ${estimatedTime}s`);
+                    }
+                    break;
+                }
 
                 default:
-        this.bot.chat("Usage: !mine <strip|tunnel|quarry|deposit|stop|status>");
+        this.bot.chat("Usage: !mine <strip|tunnel|quarry|vein|scan|deposit|stop|status>");
           this.bot.chat("Strip: !mine strip <direction> [mainLength] [numBranches]");
         this.bot.chat("Tunnel: !mine tunnel <direction> [length] [width] [height]");
+        this.bot.chat("Vein: !mine vein [radius] - Continuous ore mining (scans area)");
+        this.bot.chat("Scan: !mine scan [x y z] - Scan ore vein without mining");
         this.bot.chat("Deposit after finish: !mine deposit");
                     this.bot.chat("Directions: north, south, east, west");
             }
@@ -1617,7 +2296,7 @@ export default class ChatCommandHandler {
         return;
       }
       try {
-        const diag = await this.debug.getDiagnostics(module);
+        await this.debug.getDiagnostics(module);
         const snap = await this.debug.snapshot(module);
         // whisper short reply and log full path on server console
         this.reply(username, `Diagnostics for ${module} saved to ${snap.snapshotFile}`, isPrivate);
@@ -1885,6 +2564,107 @@ export default class ChatCommandHandler {
       } catch (e) {
         this.logger.error(`[ProxyCmd] Failed: ${e.message || e}`);
         this.reply(username, `Proxy command failed: ${e.message || e}`, true);
+      }
+    });
+
+    // 📋 Task Queue Management Commands
+    this.register('task', async (username, args, isPrivate) => {
+      if (!this.bot.taskQueue) {
+        this.reply(username, 'Task queue not available', isPrivate);
+        return;
+      }
+
+      const sub = args[0]?.toLowerCase();
+
+      try {
+        switch (sub) {
+          case 'status': {
+            const status = this.bot.taskQueue.getStatus();
+            this.reply(username, '=== Task Queue Status ===', true);
+            this.reply(username, `State: ${status.isPaused ? 'Paused' : status.isProcessing ? 'Processing' : 'Idle'}`, true);
+            this.reply(username, `Queue length: ${status.queueLength}`, true);
+            
+            if (status.currentTask) {
+              this.reply(username, `Current: ${status.currentTask.name} (${Math.round(status.currentTask.runningFor / 1000)}s)`, true);
+            } else {
+              this.reply(username, 'No task currently running', true);
+            }
+            
+            this.reply(username, `Completed: ${status.stats.tasksCompleted} | Failed: ${status.stats.tasksFailed}`, true);
+            break;
+          }
+
+          case 'list': {
+            const tasks = this.bot.taskQueue.getAllTasks();
+            if (tasks.length === 0) {
+              this.reply(username, 'No tasks in queue', true);
+              break;
+            }
+
+            this.reply(username, `=== Task List (${tasks.length} tasks) ===`, true);
+            tasks.slice(0, 10).forEach(task => {
+              const statusIcon = task.status === 'running' ? '▶' : 
+                                task.status === 'completed' ? '✓' : 
+                                task.status === 'failed' ? '✗' : '⏸';
+              this.reply(username, `${statusIcon} [${task.id}] ${task.name} (Priority: ${task.priority})`, true);
+            });
+
+            if (tasks.length > 10) {
+              this.reply(username, `...and ${tasks.length - 10} more`, true);
+            }
+            break;
+          }
+
+          case 'stats': {
+            const stats = this.bot.taskQueue.getStats();
+            this.reply(username, '=== Task Queue Statistics ===', true);
+            this.reply(username, `Total tasks: ${stats.totalTasks}`, true);
+            this.reply(username, `Completed: ${stats.tasksCompleted} | Failed: ${stats.tasksFailed} | Skipped: ${stats.tasksSkipped}`, true);
+            this.reply(username, `Success rate: ${stats.successRate}`, true);
+            this.reply(username, `Avg execution time: ${stats.averageExecutionTime}ms`, true);
+            break;
+          }
+
+          case 'pause': {
+            this.bot.taskQueue.pause();
+            this.reply(username, 'Task queue paused', isPrivate);
+            break;
+          }
+
+          case 'resume': {
+            this.bot.taskQueue.resume();
+            this.reply(username, 'Task queue resumed', isPrivate);
+            break;
+          }
+
+          case 'clear': {
+            const count = this.bot.taskQueue.clearQueue();
+            this.reply(username, `Cleared ${count} pending tasks`, isPrivate);
+            break;
+          }
+
+          case 'remove': {
+            const taskId = parseInt(args[1]);
+            if (!Number.isFinite(taskId)) {
+              this.reply(username, 'Usage: !task remove <taskId>', isPrivate);
+              break;
+            }
+
+            const removed = this.bot.taskQueue.removeTask(taskId);
+            if (removed) {
+              this.reply(username, `Task ${taskId} removed`, isPrivate);
+            } else {
+              this.reply(username, `Task ${taskId} not found`, isPrivate);
+            }
+            break;
+          }
+
+          default:
+            this.reply(username, 'Usage: !task <status|list|stats|pause|resume|clear|remove>', isPrivate);
+        }
+      } catch (err) {
+        this.logger.error(`[TaskCmd] Failed: ${err.message || err}`);
+        this.reply(username, `Task command failed: ${err.message || err}`, isPrivate);
       }
     });
   }

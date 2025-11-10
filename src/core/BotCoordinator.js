@@ -7,11 +7,14 @@ import MetricsAdapter from '../utils/MetricsAdapter.js';
  * BotCoordinator - Shared state manager for multi-bot coordination
  * Prevents bots from doing the same tasks and colliding with each other
  */
+import BotManager from './BotManager.js';
+
 export default class BotCoordinator {
   constructor({ metrics = null } = {}) {
     this.bots = new Map(); // botId -> { bot, lastUpdate, position }
     this.claimedBlocks = new Map(); // 'x,y,z' -> { botId, timestamp, task }
     this.claimedAreas = new Map(); // areaId -> { botId, timestamp, bounds }
+  this.groupRegistry = new Map(); // areaType -> [botId]
     this.taskQueue = new Map(); // taskType -> [taskData]
     this.pathfindingGoals = new Map(); // botId -> { target: Vec3, timestamp, task }
     this.blockClaimDuration = 30000; // 30 seconds
@@ -19,7 +22,60 @@ export default class BotCoordinator {
     this.goalClaimDuration = 15000; // 15 seconds for pathfinding goals
     this.mutex = new Mutex(); // For thread-safe operations
     // Metrics (optional external injection)
-  this.metrics = metrics || new MetricsAdapter();
+    this.metrics = metrics || new MetricsAdapter();
+
+    // Bot Manager (Phase A.1)
+    this.manager = new BotManager(this.metrics, {
+      pollIntervalMs: 5000,
+      electionStrategy: 'longest-uptime'
+    });
+    this.manager.attachCoordinator(this);
+    this.manager.start();
+  }
+
+  /**
+   * Group management: add bots to a named group (e.g., 'quarry', 'farm')
+   */
+  addToGroup(areaType, botIds = []) {
+    if (!areaType || !Array.isArray(botIds) || !botIds.length) return [];
+    const key = String(areaType);
+    const existing = this.groupRegistry.get(key) || [];
+    const next = Array.from(new Set(existing.concat(botIds)));
+    this.groupRegistry.set(key, next);
+    return next;
+  }
+
+  removeFromGroup(areaType, botIds = []) {
+    if (!areaType || !Array.isArray(botIds) || !botIds.length) return [];
+    const key = String(areaType);
+    const existing = this.groupRegistry.get(key) || [];
+    const next = existing.filter(b => !botIds.includes(b));
+    this.groupRegistry.set(key, next);
+    return next;
+  }
+
+  getGroup(areaType) {
+    return this.groupRegistry.get(String(areaType)) || [];
+  }
+
+  /**
+   * Recompute zones for a named area and assign work zones to the provided bot list.
+   * Returns an array of zones in the same order as botIds.
+   */
+  recomputeAndAssignZones(areaType, area, botIds = []) {
+    if (!area || !area.start || !area.end) return [];
+    if (!Array.isArray(botIds) || botIds.length === 0) return [];
+
+    // Use divideArea to split the provided area into N zones
+    const zones = this.divideArea(area, botIds.length, 'coordinator');
+    const assigned = [];
+    for (let i = 0; i < botIds.length; i++) {
+      const botId = botIds[i];
+      const zone = zones[i] || zones[zones.length - 1] || area;
+      this.assignWorkZone(botId, areaType, zone);
+      assigned.push({ botId, zone });
+    }
+    return assigned;
   }
 
   /**

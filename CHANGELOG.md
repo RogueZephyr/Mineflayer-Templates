@@ -1,5 +1,58 @@
 # CHANGELOG - ToolHandler Integration & Refactoring
 
+## Version 2.3.0 - November 10, 2025
+
+### 🤖 Multi-Bot Dynamic Group Management & Quarry Reassignment
+
+#### Highlights
+- Leader-driven multi-bot start for farming, woodcutting, and mining modes using `-b N` flag
+- Runtime `add` / `remove` group commands for farm, wood, and quarry without stopping active tasks
+- Automatic zone subdivision recomputed on every group change (anti-swarming)
+- Seamless quarry plan regeneration: active bots detect zone changes mid-dig and rebuild remaining plan
+- Group summary commands: `farm group`, `wood group`, `mine quarry group`
+- Hyphenated bot name support in group commands (e.g., `Subject_9-17`)
+- Confirmation broadcast after add/remove with machine-readable `group-update` payload + concise leader chat message
+- Unified manager message flow for `farm-command`, `wood-command`, and `mine-command` (start/stop/add/remove)
+
+#### New Commands (Manager Mode)
+```
+farm start -b N                # Leader selects N idle bots
+farm add <bot1> [bot2...]      # Add bots to farm group
+farm remove <bot1> [...]       # Remove bots from farm group
+farm group                     # Show farm group membership
+
+wood start -b N
+wood add <bot1> [...]
+wood remove <bot1> [...]
+wood group
+
+mine quarry start -b N <x1> <z1> <x2> <z2> <depth>
+mine quarry add <bot1> [...]
+mine quarry remove <bot1> [...]
+mine quarry group
+```
+
+#### Internal Changes
+- `ChatCommandHandler.js`: Added parsing & validation for new group commands; leader checks; persisted last quarry area/depth for incremental updates.
+- `MessageHandler.js`: Added add/remove handling for farm and wood; enhanced mining group update logic; broadcasts `group-update` and leader `chat` confirmations.
+- `BotCoordinator.js`: Group registry + `recomputeAndAssignZones()` drives centralized zone assignment; reused for quarry and farming subdivisions.
+- Quarry dynamic reassignment: MiningBehavior monitors assigned zone and regenerates plan when bounds change.
+
+#### Behavior Impact
+- Zero downtime when modifying quarry workforce—bots adjust plans mid-layer.
+- Farming & woodcutting groups expand/contract instantly; removed bots receive targeted stop.
+- Machine-readable `group-update` enables future dashboard or telemetry consumption (contains bot->zone mapping).
+
+#### Documentation
+- `README.md` updated with multi-bot examples, dynamic quarry lifecycle, leader-only semantics, and group management syntax.
+
+#### Next Steps
+- Richer zone introspection command (e.g., `group zones` with per-bot bounds)
+- Dashboard integration consuming `group-update` events
+- Extend dynamic reassignment to strip/tunnel modes (adaptive segmentation)
+
+---
+
 ## Version 2.2.0 - November 8, 2025
 
 ### ✨ Quick Wins, Async I/O, Tooling, Deposit Standardization, and Reply Normalization
