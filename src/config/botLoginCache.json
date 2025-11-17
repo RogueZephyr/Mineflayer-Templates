@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "bots": {
+    "Beatrix917": {
+      "password": "FZ9AyiWuAkhlv6OB69s6FqZv",
+      "createdAt": "2025-11-16T02:56:06.017Z",
+      "lastUsedAt": "2025-11-16T20:09:26.815Z",
+      "servers": {
+        "xxrp-smp.modrinth.gg:24936": {
+          "registeredAt": "2025-11-16T03:03:21.451Z",
+          "lastSeenAt": "2025-11-16T20:09:29.346Z"
+        }
+      }
+    },
+    "RogueW0lfy": {
+      "password": "cqfkinz3pFwLhOb9kANTgARV",
+      "createdAt": "2025-11-16T20:40:03.080Z",
+      "lastUsedAt": "2025-11-16T22:01:28.033Z",
+      "servers": {
+        "xxrp-smp.modrinth.gg:24936": {
+          "registeredAt": "2025-11-16T20:40:07.676Z",
+          "lastSeenAt": "2025-11-16T20:40:07.676Z"
+        },
+        "172.240.8.162:47219": {
+          "registeredAt": "2025-11-16T20:41:26.330Z",
+          "lastSeenAt": "2025-11-16T22:01:29.065Z"
+        }
+      }
+    }
+  }
+}

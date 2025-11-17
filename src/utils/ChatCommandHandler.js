@@ -30,6 +30,13 @@ export default class ChatCommandHandler {
   this._initialized = false;
   this._initPromise = null;
     
+    // Register instance for global console broadcast support (multi-bot)
+    try {
+      const Ctor = /** @type {typeof ChatCommandHandler} */ (this.constructor);
+      if (!Ctor._instances) Ctor._instances = new Set();
+      Ctor._instances.add(this);
+    } catch (_) {}
+
     // Rate limiting per user (prevents spam/abuse)
     this.rateLimits = new Map(); // username -> lastCommandTime
     this.rateLimitMs = 1000; // 1 second between commands per user
@@ -40,6 +47,16 @@ export default class ChatCommandHandler {
 
     // Compile whisper patterns from config
     this.whisperPatterns = this._compileWhisperPatterns(config.whisperPatterns || []);
+
+  // Silent mode: when true, all outbound chat/whisper from this handler are suppressed from the server.
+  // Replies and direct bot.chat/whisper calls are logged to console instead.
+  this.silentMode = !!(this.config.chat?.silentReply === true || this.config.chat?.silentMode === true);
+  this._silentOriginalChat = null;
+  this._silentOriginalWhisper = null;
+    if (this.silentMode) {
+      this._applySilentWrappers();
+      this.logger.info('[SilentMode] Enabled at startup');
+    }
 
     // Core systems
     // support modules that export default OR named export
@@ -142,6 +159,12 @@ export default class ChatCommandHandler {
     this._initPromise = null;
 
     this.logger.info('[ChatCommandHandler] Disposed');
+
+    // Unregister from global instances set
+    try {
+      const Ctor = /** @type {typeof ChatCommandHandler} */ (this.constructor);
+      if (Ctor._instances) Ctor._instances.delete(this);
+    } catch (_) {}
   }
 
   // ------------------------------
@@ -173,42 +196,16 @@ export default class ChatCommandHandler {
       try {
         // Check if input is a bot command (starts with !)
         if (input.startsWith('!')) {
-          const cleanMessage = input.replace(cmdPrefix, '').trim();
-          const parts = cleanMessage.split(/\s+/);
-          const commandName = parts.shift().toLowerCase();
-          const args = parts;
-
-          if (this.commands.has(commandName)) {
-            this.logger.info(chalk.cyan(`[Console] Executing command: ${commandName}`));
-            
-            // Execute command as master (console has full permissions)
-            const handler = this.commands.get(commandName);
-            // Override chat + whisper temporarily so any direct calls are captured.
-            const originalChat = this.bot.chat ? this.bot.chat.bind(this.bot) : null;
-            const originalWhisper = this.bot.whisper ? this.bot.whisper.bind(this.bot) : null;
-            this._consoleCommandActive = true;
-            this._originalBotChat = originalChat; // Store for commands that need real chat (like !say)
-            if (originalChat) {
-              this.bot.chat = (msg) => { if (msg) this.logger.info(`[Console Reply] ${msg}`); };
+          // Broadcast to all registered handlers so multi-bot targeting works.
+          try {
+            const Ctor = /** @type {typeof ChatCommandHandler} */ (this.constructor);
+            const instances = Ctor._instances ? Array.from(Ctor._instances) : [this];
+            for (const inst of instances) {
+              // Use synthetic console sender so handler applies safe output suppression
+              await inst.handleMessage(DASHBOARD_CONSOLE_SENDER, input, true);
             }
-            if (originalWhisper) {
-              this.bot.whisper = (target, msg) => { if (msg) this.logger.info(`[Console Reply->${target}] ${msg}`); };
-            }
-            try {
-              const res = handler.call(this, this.master, args, true); // treat console as private context
-              if (res instanceof Promise) await res;
-            } catch (err) {
-              this.logger.error(`[Console] Command error: ${err?.message || err}`);
-            } finally {
-              // Restore originals
-              this._consoleCommandActive = false;
-              this._originalBotChat = null;
-              if (originalChat) this.bot.chat = originalChat;
-              if (originalWhisper) this.bot.whisper = originalWhisper;
-            }
-          } else {
-            this.logger.warn(chalk.yellow(`[Console] Unknown command: ${commandName}`));
-            this.logger.info(chalk.gray('Type !help for available commands'));
+          } catch (err) {
+            this.logger.error(`[Console] Broadcast error: ${err?.message || err}`);
           }
         } else {
           // If not a command, send as chat message
@@ -437,20 +434,50 @@ export default class ChatCommandHandler {
   // Helper method to reply (whisper if private, chat if public)
   reply(username, message, isPrivate) {
     if (!message) return;
-    // Intercept replies during console command execution
-    if (this._consoleCommandActive) {
+    // If console command active OR silent mode, route to console only.
+    if (this._consoleCommandActive || this.silentMode) {
       if (isPrivate) {
         this.logger.info(`[Console Reply->${username}] ${message}`);
       } else {
         this.logger.info(`[Console Reply] ${message}`);
       }
-      return; // do not send to server
+      return;
     }
-    if (isPrivate) {
-      this.bot.whisper(username, message);
-    } else {
-      this.bot.chat(message);
+    // Normal behavior
+    if (isPrivate) this.bot.whisper(username, message); else this.bot.chat(message);
+  }
+
+  setSilentMode(enabled) {
+    if (enabled && !this.silentMode) {
+      this.silentMode = true;
+      this._applySilentWrappers();
+      this.logger.info(`[SilentMode] ${this.bot.username} now silent`);
+    } else if (!enabled && this.silentMode) {
+      this.silentMode = false;
+      this._removeSilentWrappers();
+      this.logger.info(`[SilentMode] ${this.bot.username} no longer silent`);
     }
+  }
+
+  _applySilentWrappers() {
+    try {
+      if (!this.bot) return;
+      if (!this._silentOriginalChat && this.bot.chat) this._silentOriginalChat = this.bot.chat.bind(this.bot);
+      if (!this._silentOriginalWhisper && this.bot.whisper) this._silentOriginalWhisper = this.bot.whisper.bind(this.bot);
+      // Replace with console logging versions
+      if (this.bot.chat) this.bot.chat = (msg) => { if (msg) this.logger.info(`[Silent Chat Suppressed] ${msg}`); };
+      if (this.bot.whisper) this.bot.whisper = (target, msg) => { if (msg) this.logger.info(`[Silent Whisper Suppressed->${target}] ${msg}`); };
+    } catch (_) {}
+  }
+
+  _removeSilentWrappers() {
+    try {
+      if (!this.bot) return;
+      if (this._silentOriginalChat) this.bot.chat = this._silentOriginalChat;
+      if (this._silentOriginalWhisper) this.bot.whisper = this._silentOriginalWhisper;
+      this._silentOriginalChat = null;
+      this._silentOriginalWhisper = null;
+    } catch (_) {}
   }
 
   /**
@@ -596,6 +623,8 @@ export default class ChatCommandHandler {
         this._originalBotChat = null;
         if (originalChat) this.bot.chat = originalChat;
         if (originalWhisper) this.bot.whisper = originalWhisper;
+        // Reapply silent wrappers if silent mode currently enabled
+        if (this.silentMode) this._applySilentWrappers();
       }
     }
   }
@@ -607,6 +636,60 @@ export default class ChatCommandHandler {
     // 🧠 Basic
     this.register('ping', (username, args, isPrivate) => {
       this.reply(username, 'Pong!', isPrivate);
+    });
+
+    // Silent mode control: !silent <on|off|status>
+  this.register('silent', (username, args, _isPrivate) => {
+      const sub = (args[0] || 'status').toLowerCase();
+      if (sub === 'on') {
+        this.setSilentMode(true);
+        this.reply(username, `Silent mode enabled for ${this.bot.username}`, true);
+        return;
+      }
+      if (sub === 'off') {
+        this.setSilentMode(false);
+        this.reply(username, `Silent mode disabled for ${this.bot.username}`, true);
+        return;
+      }
+      // status
+      this.reply(username, `Silent mode: ${this.silentMode ? 'ON' : 'OFF'}`, true);
+    });
+
+    // Activation controls (per-bot); intended for console use but available to whitelisted users
+    this.register('activate', (username, args, isPrivate) => {
+      try {
+        // Allow explicit target: !activate BotName
+        const { isForThisBot } = this.parseTargetedCommand(args);
+        if (!isForThisBot) return; // another handler instance will process
+      } catch (_) {}
+
+      const ctl = this.bot.controller;
+      if (ctl && typeof ctl.activate === 'function') {
+        ctl.activate();
+        this.reply(username, `Activated ${this.bot.username}`, isPrivate);
+      } else {
+        try { this.bot.isActivated = true; } catch (_) {}
+        this.reply(username, `Activated ${this.bot.username} (fallback)`, isPrivate);
+      }
+    });
+
+    this.register('deactivate', (username, args, isPrivate) => {
+      try {
+        const { isForThisBot } = this.parseTargetedCommand(args);
+        if (!isForThisBot) return;
+      } catch (_) {}
+
+      const ctl = this.bot.controller;
+      if (ctl && typeof ctl.deactivate === 'function') {
+        ctl.deactivate();
+        this.reply(username, `Deactivated ${this.bot.username}`, isPrivate);
+      } else {
+        try { this.bot.isActivated = false; } catch (_) {}
+        // Best-effort stop
+        try { if (this.bot.pathfindingUtil) this.bot.pathfindingUtil.stop(); } catch (_) {}
+        try { if (this.bot.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') this.bot.pathfinder.setGoal(null); } catch (_) {}
+        this.reply(username, `Deactivated ${this.bot.username} (fallback)`, isPrivate);
+      }
     });
 
     // Bot Manager (Phase A.1) - minimal control & inspection
@@ -651,8 +734,8 @@ export default class ChatCommandHandler {
         '=== Bot Commands ===',
         'Movement: come, goto, follow, stop',
         'Home: sethome [x y z], home, ishome',
-        'Actions: eat, sleep, farm, wood, collect',
-        'Mining: mine <strip|tunnel|stop|status>',
+  'Actions: eat, sleep, farm, wood, collect',
+  'Mining: mine <strip|tunnel|vein|stop|status>',
         'Tools: tools <status|report|check|equip>',
         'Deposit: deposit, depositall, depositnearest',
         'Utility: loginv, drop, debug',
@@ -674,8 +757,10 @@ export default class ChatCommandHandler {
         helpMsg.push('  - Examples:');
         helpMsg.push('    • !mine tunnel north 50');
         helpMsg.push('    • !mine tunnel south 30 4 3  (width=4, height=3)');
-        helpMsg.push('!mine stop - Stop mining');
-        helpMsg.push('!mine status - Show progress');
+  helpMsg.push('!mine vein [radius] - Continuous ore mining (scans area)');
+  helpMsg.push('!mine vein focus <list|set|add|remove|clear> [...] - Restrict vein mining to specified ores');
+  helpMsg.push('!mine stop - Stop mining');
+  helpMsg.push('!mine status - Show progress');
         helpMsg.push('Directions: north, south, east, west');
       } else if (cmd === 'tools') {
         helpMsg.length = 0;
@@ -2099,6 +2184,52 @@ export default class ChatCommandHandler {
                         this.bot.chat("Ore scanner not available");
                         break;
                     }
+          // Focus mode controls
+          // !mine vein focus list
+          // !mine vein focus set <ore...>
+          // !mine vein focus add <ore...>
+          // !mine vein focus remove <ore...>
+          // !mine vein focus clear
+          if ((args[1] || '').toLowerCase() === 'focus') {
+            const action = (args[2] || 'list').toLowerCase();
+            const names = args.slice(3).map(s => s.toLowerCase());
+            const mining = this.behaviors.mining;
+            if (!mining) { this.bot.chat('Mining behavior not available'); break; }
+            if (action === 'list') {
+              const info = mining.getVeinFocus();
+              if (!info.enabled || info.list.length === 0) {
+                this.bot.chat('Vein focus: disabled');
+              } else {
+                this.bot.chat(`Vein focus: ${info.list.join(', ')}`);
+              }
+              break;
+            }
+            if (action === 'clear') {
+              mining.clearVeinFocus();
+              this.bot.chat('Vein focus cleared (disabled)');
+              break;
+            }
+            if (!names.length) {
+              this.bot.chat('Usage: !mine vein focus <list|set|add|remove|clear> [ores...]');
+              break;
+            }
+            if (action === 'set') {
+              mining.setVeinFocus(names);
+              const info = mining.getVeinFocus();
+              this.bot.chat(`Vein focus set: ${info.enabled ? info.list.join(', ') : 'disabled'}`);
+            } else if (action === 'add') {
+              mining.addVeinFocus(names);
+              const info = mining.getVeinFocus();
+              this.bot.chat(`Vein focus: ${info.list.join(', ')}`);
+            } else if (action === 'remove') {
+              mining.removeVeinFocus(names);
+              const info = mining.getVeinFocus();
+              this.bot.chat(info.enabled ? `Vein focus: ${info.list.join(', ')}` : 'Vein focus: disabled');
+            } else {
+              this.bot.chat('Usage: !mine vein focus <list|set|add|remove|clear> [ores...]');
+            }
+            break;
+          }
                     
                     // Check if coordinates provided (legacy single-vein mode)
                     if (args.length >= 4) {
@@ -2207,7 +2338,8 @@ export default class ChatCommandHandler {
         this.bot.chat("Usage: !mine <strip|tunnel|quarry|vein|scan|deposit|stop|status>");
           this.bot.chat("Strip: !mine strip <direction> [mainLength] [numBranches]");
         this.bot.chat("Tunnel: !mine tunnel <direction> [length] [width] [height]");
-        this.bot.chat("Vein: !mine vein [radius] - Continuous ore mining (scans area)");
+  this.bot.chat("Vein: !mine vein [radius] - Continuous ore mining (scans area)");
+  this.bot.chat("Vein focus: !mine vein focus <list|set|add|remove|clear> [...]");
         this.bot.chat("Scan: !mine scan [x y z] - Scan ore vein without mining");
         this.bot.chat("Deposit after finish: !mine deposit");
                     this.bot.chat("Directions: north, south, east, west");

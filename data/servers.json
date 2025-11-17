@@ -4,9 +4,9 @@
     {
       "alias": "smp",
       "host": "172.240.8.162",
-      "port": 25567,
+      "port": 47219,
       "version": "1.21.1",
-      "lastUsed": 1762593309756
+      "lastUsed": 1763330488030
     },
     {
       "alias": "test",
@@ -20,14 +20,14 @@
       "host": "xxrp-smp.modrinth.gg",
       "port": 24936,
       "version": "1.21.1",
-      "lastUsed": 1762748478357
+      "lastUsed": 1763325604441
     },
     {
       "alias": "172.240.8.162",
       "host": "172.240.8.162",
-      "port": 25567,
+      "port": 47219,
       "version": "1.21.1",
-      "lastUsed": 1762592948796
+      "lastUsed": 1763330488922
     },
     {
       "alias": "extremecraft",

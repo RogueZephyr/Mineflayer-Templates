@@ -210,7 +210,41 @@ Without a bot name, all bots respond:
 
 ---
 
-## 🚀 Quick Start
+## �️ Console commands (from your terminal)
+
+You can control bots directly from the terminal where you launched them. This avoids in‑game spam and is great for multi‑bot orchestration.
+
+- Type commands prefixed with `!` (they’ll execute privately and print replies to your terminal).
+- Target a specific bot by prefixing the bot name: `!BotName <command>`.
+- Any line without `!` is sent as public chat by the bot (honors config cooldowns; consider your server rules).
+
+Examples:
+
+```
+!help
+!come
+!goto 100 64 200
+!deposit ores
+!depositnearest all 40
+!stop
+
+# Target specific bots (multi-bot)
+!RogueW0lfy come
+!Subject_9-17 mine tunnel east 50
+!L@b_R4t home
+
+# Intentionally talk in public chat (bypasses console suppression)
+!say Hello everyone!
+```
+
+Notes:
+- Console replies are printed as `[Console Reply] ...`; they do not hit the server.
+- The console is treated as the master user for permissions.
+- In Electron dashboard mode, local stdin is disabled (dashboard handles commands).
+
+---
+
+## �🚀 Quick Start
 
 ### Installation
 ```bash

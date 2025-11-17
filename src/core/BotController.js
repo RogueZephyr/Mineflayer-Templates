@@ -32,6 +32,7 @@ import ProxyManager from '../utils/ProxyManager.js';
 import OreScanner from '../utils/OreScanner.js';
 import BedRegistry from '../state/BedRegistry.js';
 import TaskQueue from '../utils/TaskQueue.js';
+import BotLoginCache from './BotLoginCache.js';
 // NOTE: Legacy 'fs' import removed to satisfy lint (unused)
 import fsp from 'fs/promises';
 import path from 'path';
@@ -72,6 +73,15 @@ export class BotController {
     this.coordinator = coordinator; // Shared coordinator for multi-bot sync
     this.instanceId = instanceId; // Bot instance ID for proxy rotation
     this.shouldReconnect = true; // Allow runtime to disable auto-reconnect when removing
+
+    // Initialize login cache for per-bot credentials & per-server registration
+    this.loginCache = new BotLoginCache(this.logger, {
+      cacheFilePath: this.config.security?.botLoginCache?.filePath
+    });
+    this.loginCache.init();
+    this.loginCredentials = null;
+    // Activation gate: bots start inactive and do nothing until activated via console command
+    this.activated = false;
   }
 
   getAvailableUsername() {
@@ -124,6 +134,14 @@ export class BotController {
         version: this.config.version || 'auto'
       };
 
+      // Retrieve or create persistent credentials for this bot username
+      try {
+        this.loginCredentials = this.loginCache.getOrCreateCredentials(this.username);
+      } catch (credErr) {
+        this.logger.warn('[BotController] Failed to load login credentials, continuing without cache:', credErr.message || credErr);
+        this.loginCredentials = null;
+      }
+
   // Initialize proxy manager (ensure async pool load completed first)
   await ProxyManager.loadProxyPool(this.logger);
   const proxyManager = new ProxyManager(this.config, this.logger, this.instanceId);
@@ -175,6 +193,17 @@ export class BotController {
 
       // create the bot instance
       this.bot = mineflayer.createBot(botOptions);
+
+  // Expose controller and activation state on bot for cross-module access
+  try { this.bot.controller = this; } catch (_) {}
+  try { this.bot.isActivated = false; } catch (_) {}
+
+      // Apply global chat cooldown wrapper to prevent spammy output
+      try {
+        this.applyChatCooldown();
+      } catch (e) {
+        this.logger.warn('[BotController] Failed to apply chat cooldown wrapper:', e.message || e);
+      }
 
       // Attach usernameList to bot for ChatCommandHandler access
       this.bot.constructor.usernameList = BotController.usernameList;
@@ -283,6 +312,100 @@ export class BotController {
     });
   }
 
+  // Global chat cooldown wrapper to throttle bot.chat calls
+  applyChatCooldown() {
+    const bot = this.bot;
+    if (!bot || typeof bot.chat !== 'function') return;
+
+    const cooldownCfg = this.config.chat?.cooldown || {};
+    const enabled = cooldownCfg.enabled !== false; // default: enabled
+    const minIntervalMs = typeof cooldownCfg.minIntervalMs === 'number' && cooldownCfg.minIntervalMs > 0
+      ? cooldownCfg.minIntervalMs
+      : 1500;
+    const loginGraceMs = typeof cooldownCfg.loginGraceMs === 'number' && cooldownCfg.loginGraceMs > 0
+      ? cooldownCfg.loginGraceMs
+      : 10000; // default: 10s with no outbound chat
+
+    if (!enabled) {
+      this.logger.info('[ChatCooldown] Global chat cooldown disabled via config');
+      return;
+    }
+
+    const originalChat = bot.chat.bind(bot);
+    this._originalChatFn = originalChat;
+
+    let lastSent = 0;
+    let queue = [];
+    let timer = null;
+    const loginTime = Date.now();
+
+    const flushQueue = () => {
+      if (!this.bot || typeof this.bot.chat !== 'function') {
+        queue = [];
+        if (timer) clearTimeout(timer);
+        timer = null;
+        return;
+      }
+
+      const now = Date.now();
+
+      // During login grace period, do not send anything yet – just delay flush
+      const sinceLogin = now - loginTime;
+      if (sinceLogin < loginGraceMs) {
+        const delay = Math.max(loginGraceMs - sinceLogin, 50);
+        timer = setTimeout(flushQueue, delay);
+        return;
+      }
+
+      if (queue.length === 0) {
+        timer = null;
+        return;
+      }
+
+      const elapsed = now - lastSent;
+
+      if (elapsed >= minIntervalMs) {
+        const msg = queue.shift();
+        lastSent = now;
+        try {
+          originalChat(msg);
+        } catch (err) {
+          this.logger.warn(`[ChatCooldown] Failed to send queued message: ${err.message || err}`);
+        }
+      }
+
+      if (queue.length > 0) {
+        const delay = Math.max(minIntervalMs - (Date.now() - lastSent), 50);
+        timer = setTimeout(flushQueue, delay);
+      } else {
+        timer = null;
+      }
+    };
+
+    bot.chat = (msg) => {
+      if (!msg) return;
+      queue.push(msg);
+
+      if (!timer) {
+        const now = Date.now();
+        const sinceLogin = now - loginTime;
+        let delay;
+
+        if (sinceLogin < loginGraceMs) {
+          // Defer first flush until grace period has ended
+          delay = loginGraceMs - sinceLogin;
+        } else {
+          const elapsed = now - lastSent;
+          delay = elapsed >= minIntervalMs ? 0 : (minIntervalMs - elapsed);
+        }
+
+        timer = setTimeout(flushQueue, Math.max(delay, 0));
+      }
+    };
+
+    this.logger.info(`[ChatCooldown] Enabled with minIntervalMs=${minIntervalMs}, loginGraceMs=${loginGraceMs}`);
+  }
+
   onLogin() {
     // choose host text defensively because internals differ by net impl
     const host = (this.bot?._client?.socket?._host) || this.config.host || 'unknown';
@@ -364,15 +487,19 @@ export class BotController {
     try {
       const icCfg = this.config?.behaviors?.itemCollector || {};
       if (icCfg.autoStart) {
-        this.behaviors.itemCollector.startAuto({
-          type: icCfg.type || 'farm',
-          intervalMs: typeof icCfg.intervalMs === 'number' ? icCfg.intervalMs : 10000,
-          radius: typeof icCfg.radius === 'number' ? icCfg.radius : 8
-        });
-        this.logger.info('[BotController] ItemCollector auto-started');
+        if (this.activated) {
+          this.behaviors.itemCollector.startAuto({
+            type: icCfg.type || 'farm',
+            intervalMs: typeof icCfg.intervalMs === 'number' ? icCfg.intervalMs : 10000,
+            radius: typeof icCfg.radius === 'number' ? icCfg.radius : 8
+          });
+          this.logger.info('[BotController] ItemCollector auto-started');
+        } else {
+          this.logger.info('[BotController] ItemCollector autoStart deferred until activation');
+        }
       }
     } catch (e) {
-      this.logger.warn('[BotController] Failed to auto-start ItemCollector:', e.message || e);
+      this.logger.warn('[BotController] Failed to evaluate ItemCollector auto-start:', e.message || e);
     }
 
     this.debug = new DebugTools(this.bot, this.logger, this.behaviors, { chestRegistry: this.chestRegistry, depositBehavior: this.behaviors.deposit });
@@ -395,7 +522,7 @@ export class BotController {
     this.bot.depositUtil = this.depositUtil;
     this.logger.info('[BotController] DepositUtil initialized');
     
-    // Initialize scaffolding utility unless basic mode is requested
+  // Initialize scaffolding utility unless basic mode is requested
     const useBasicScaffolding = !!(this.config.behaviors?.woodcutting?.useBasicScaffolding);
     if (!useBasicScaffolding) {
       const scaffoldConfig = this.config.behaviors?.woodcutting?.scaffolding || {};
@@ -422,14 +549,15 @@ export class BotController {
 
     // Initialize all behaviors with proper configuration
     const lookConfig = this.config.behaviors?.look || {};
-    this.behaviors.look = new LookBehavior(this.bot, lookConfig);
-    this.behaviors.look.master = this.master; // Pass master username
-    this.behaviors.look.enable(); // enable by default
+  this.behaviors.look = new LookBehavior(this.bot, lookConfig);
+  this.behaviors.look.master = this.master; // Pass master username
+  // Do NOT enable by default; activation required to start any behavior
     this.bot.lookBehavior = this.behaviors.look; // Make accessible via bot object
     this.logger.info('LookBehavior initialized successfully!');
 
     this.behaviors.chatLogger = new ChatLogger(this.bot, this.logger, BotController.usernameList);
-    this.behaviors.chatLogger.enable();
+  // ChatLogger is safe to enable (logging only, no actions)
+  this.behaviors.chatLogger.enable();
     this.logger.info('ChatLogger initialized successfully!');
 
     // Initialize ChatDebugLogger if enabled in config
@@ -449,7 +577,7 @@ export class BotController {
     );
     this.bot.sleepBehavior = this.behaviors.sleep; // make accessible via bot object
 
-    this.behaviors.inventory = new InventoryBehavior(this.bot, this.logger);
+  this.behaviors.inventory = new InventoryBehavior(this.bot, this.logger);
     this.behaviors.inventory.logInventory();
 
     // Farm behavior with look behavior integration
@@ -474,7 +602,7 @@ export class BotController {
     // Home behavior for graceful logout
     this.behaviors.home = new HomeBehavior(this.bot, this.logger);
     this.bot.homeBehavior = this.behaviors.home; // Make accessible via bot object
-    this.logger.info('HomeBehavior initialized successfully!');
+  this.logger.info('HomeBehavior initialized successfully!');
 
     this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors, this.config);
     // Expose for external controllers (dashboard runtime) to invoke commands directly
@@ -491,13 +619,17 @@ export class BotController {
       }
     })();
 
-    // Set up hunger check interval (always runs, logs only in debug mode)
+    // Set up hunger check interval (gated by activation; logs only in debug mode)
     if (this.hungerCheckInterval) {
       clearInterval(this.hungerCheckInterval);
     }
 
     this.hungerCheckInterval = setInterval(async () => {
       try {
+        if (!this.activated) {
+          // Skip hunger checks while inactive
+          return;
+        }
         if (this.config.debug === true) {
           this.logger.debug(`Checking hunger...`);
         }
@@ -520,13 +652,14 @@ export class BotController {
       }, 10000); // Clean up every 10 seconds
     }
 
-    this.logger.info('All behaviors initialized successfully!');
+  this.logger.info('All behaviors initialized successfully!');
 
     // MessageHandler: handle out-of-band manager messages
     try {
       this.behaviors.messageHandler = new MessageHandler(this.bot, this.logger, this.master);
-      if (typeof this.behaviors.messageHandler.enable === 'function') this.behaviors.messageHandler.enable();
-      this.logger.info('MessageHandler initialized successfully!');
+      // Do not enable MessageHandler until activation (prevents manager-driven actions)
+      // if (typeof this.behaviors.messageHandler.enable === 'function') this.behaviors.messageHandler.enable();
+      this.logger.info('MessageHandler initialized (disabled until activation)');
     } catch (e) {
       this.logger.warn(`MessageHandler init failed: ${e.message || e}`);
     }
@@ -535,15 +668,15 @@ export class BotController {
     try {
       const idleCfg = this.config.behaviors?.idle || {};
       this.behaviors.idle = new IdleBehavior(this.bot, this.logger, idleCfg);
-      if (typeof this.behaviors.idle.enable === 'function') this.behaviors.idle.enable();
-      this.logger.info('IdleBehavior initialized successfully!');
+      // Do not enable idle by default; activation or explicit command should start it
+      this.logger.info('IdleBehavior initialized (disabled by default)');
     } catch (e) {
       this.logger.warn(`IdleBehavior init failed: ${e.message || e}`);
     }
 
-    // Auto bed claim attempt upon spawn (non-sleep claim for ownership; whisper master if none)
+    // Auto bed claim attempt upon spawn (non-sleep claim for ownership; notify master if none)
     try {
-      if (this.behaviors.sleep && !this.behaviors.sleep.bedPos) {
+      if (this.behaviors.sleep && !this.behaviors.sleep.bedPos && this.activated) {
         (async () => {
           try {
             const pos = await this.behaviors.sleep.findAvailableBed();
@@ -552,12 +685,28 @@ export class BotController {
               // Track claimed bed on sleep behavior for later release
               this.behaviors.sleep.bedPos = pos;
             } else {
-              // whisper master requesting a bed placement
-              if (this.master && this.bot.chat) {
-                // Use direct chat whisper command to avoid public spam
-                this.bot.chat(`/msg ${this.master} No free bed found near spawn. Please place a ${this.config.behaviors?.sleep?.bedColor || 'red'} bed.`);
-              }
               this.logger.warn('[AutoBed] No available bed to claim on spawn');
+
+              // Optionally whisper master requesting a bed placement, but respect chat timing guards.
+              if (this.master && this.bot && typeof this.bot.chat === 'function') {
+                const cooldownCfg = this.config.chat?.cooldown || {};
+                const loginGraceMs = typeof cooldownCfg.loginGraceMs === 'number' && cooldownCfg.loginGraceMs > 0
+                  ? cooldownCfg.loginGraceMs
+                  : 10000;
+
+                const bedMsg = `/msg ${this.master} No free bed found near spawn. Please place a ${this.config.behaviors?.sleep?.bedColor || 'red'} bed.`;
+
+                // Defer the message until after the login grace period to avoid early command spam
+                setTimeout(() => {
+                  try {
+                    if (this.bot && typeof this.bot.chat === 'function') {
+                      this.bot.chat(bedMsg);
+                    }
+                  } catch (err) {
+                    this.logger.warn('[AutoBed] Failed to send bed request whisper:', err.message || err);
+                  }
+                }, loginGraceMs);
+              }
             }
           } catch (bedErr) {
             this.logger.warn(`[AutoBed] Bed claim failed: ${bedErr.message || bedErr}`);
@@ -578,6 +727,178 @@ export class BotController {
         })();
       }
     } catch (_) { /* ignore */ }
+
+    // After full spawn initialization, handle server auth (first-time register or login-on-join)
+    try {
+      this.handleServerAuthCommands();
+    } catch (e) {
+      this.logger.warn('[Auth] Server auth handler failed:', e.message || e);
+    }
+  }
+
+  // -------- Activation controls --------
+  isActive() { return this.activated === true; }
+
+  activate(_options = {}) {
+    // Idempotent activation
+    this.activated = true;
+    if (this.bot) this.bot.isActivated = true;
+
+    this.logger.info(`[Activation] ${this.username} activated`);
+
+    // Enable safe, non-invasive behaviors on activation if desired
+    try { if (this.behaviors.look && !this.behaviors.look.enabled) this.behaviors.look.enable(); } catch (_) {}
+
+    // Start item collector auto loop if configured
+    try {
+      const icCfg = this.config?.behaviors?.itemCollector || {};
+      if (this.behaviors.itemCollector && icCfg.autoStart && !this.behaviors.itemCollector.isRunning) {
+        this.behaviors.itemCollector.startAuto({
+          type: icCfg.type || 'farm',
+          intervalMs: typeof icCfg.intervalMs === 'number' ? icCfg.intervalMs : 10000,
+          radius: typeof icCfg.radius === 'number' ? icCfg.radius : 8
+        });
+        this.logger.info('[Activation] ItemCollector auto-started');
+      }
+    } catch (e) {
+      this.logger.warn('[Activation] Failed to auto-start ItemCollector:', e.message || e);
+    }
+
+    // Enable manager message handler if present
+    try {
+      if (this.behaviors.messageHandler && typeof this.behaviors.messageHandler.enable === 'function') {
+        this.behaviors.messageHandler.enable();
+      }
+    } catch (_) {}
+
+    return true;
+  }
+
+  deactivate() {
+    this.activated = false;
+    if (this.bot) this.bot.isActivated = false;
+    this.logger.info(`[Activation] ${this.username} deactivated`);
+
+    // Stop movement/pathfinding
+    try { if (this.bot?.pathfindingUtil) this.bot.pathfindingUtil.stop(); } catch (_) {}
+    try { if (this.bot?.pathfinder && typeof this.bot.pathfinder.setGoal === 'function') this.bot.pathfinder.setGoal(null); } catch (_) {}
+
+    // Disable/stop behaviors that could perform actions
+    try { if (this.behaviors.mining?.isWorking && typeof this.behaviors.mining.stopMining === 'function') this.behaviors.mining.stopMining(); } catch (_) {}
+    try { if (this.behaviors.farm?.isWorking && typeof this.behaviors.farm.disable === 'function') this.behaviors.farm.disable(); } catch (_) {}
+    try { if (this.behaviors.woodcutting?.isWorking && typeof this.behaviors.woodcutting.disable === 'function') this.behaviors.woodcutting.disable(); } catch (_) {}
+    try { if (this.behaviors.itemCollector?.isRunning && typeof this.behaviors.itemCollector.stopAuto === 'function') this.behaviors.itemCollector.stopAuto(); } catch (_) {}
+    try { if (this.behaviors.idle?.isIdle && typeof this.behaviors.idle.stopIdle === 'function') this.behaviors.idle.stopIdle(); } catch (_) {}
+    try { if (this.behaviors.look?.enabled && typeof this.behaviors.look.pause === 'function') this.behaviors.look.pause(); } catch (_) {}
+
+    // Disable manager message handler to avoid task triggers
+    try { if (this.behaviors.messageHandler && typeof this.behaviors.messageHandler.disable === 'function') this.behaviors.messageHandler.disable(); } catch (_) {}
+
+    return true;
+  }
+
+  handleServerAuthCommands() {
+    const bot = this.bot;
+    const creds = this.loginCredentials;
+    if (!bot || !creds || !this.loginCache) return;
+
+    const host = this.config.host;
+    const port = this.config.port;
+    const serverKey = `${host}:${port}`;
+    const username = creds.username;
+    const password = creds.password;
+
+    if (!password) {
+      this.logger.warn('[Auth] No password available for server auth');
+      return;
+    }
+
+    const isRegistered = this.loginCache.hasServerRegistration(username, serverKey);
+
+    // Resolve templates and delays (supports per-server overrides)
+    const globalCfg = this.config.security?.botLoginCache || {};
+    const override = (globalCfg.serverOverrides && globalCfg.serverOverrides[serverKey]) || {};
+
+  const firstTpl = override.firstLoginCommandTemplate ?? globalCfg.firstLoginCommandTemplate ?? '/register {password} {confirm}';
+  const firstDelay = override.firstLoginCommandDelayMs ?? globalCfg.firstLoginCommandDelayMs ?? 3000;
+
+  // Optional second step for registration confirmation (e.g., "/password confirm {password}")
+  const confirmTpl = override.firstLoginConfirmCommandTemplate ?? globalCfg.firstLoginConfirmCommandTemplate;
+  // Interpret confirm delay as time AFTER the first command is sent
+  const confirmDelay = override.firstLoginConfirmCommandDelayMs ?? globalCfg.firstLoginConfirmCommandDelayMs ?? 4000;
+
+    const loginTpl = override.loginOnJoinCommandTemplate ?? globalCfg.loginOnJoinCommandTemplate; // may be undefined to disable
+    const loginDelay = override.loginCommandDelayMs ?? globalCfg.loginCommandDelayMs ?? 12000;
+
+    const render = (tpl) => (tpl || '')
+      .replaceAll('{password}', password)
+      .replaceAll('{confirm}', password)
+      .replaceAll('{username}', username);
+
+    // For authentication, bypass global chat cooldown and allowInGameChat guard
+    // Auth commands are essential and should be sent even when normal chat is disabled.
+    const sendAuthCommand = (msg) => {
+      if (!msg) return;
+      try {
+        const fn = this._originalChatFn || (this.bot && this.bot.chat && this.bot.chat.bind(this.bot));
+        if (fn) fn(msg);
+      } catch (err) {
+        this.logger.error('[Auth] Failed to send auth command:', err?.message || err);
+      }
+    };
+
+    if (!isRegistered) {
+      const cmd = render(firstTpl);
+      if (!cmd) {
+        this.logger.warn('[Auth] No firstLoginCommandTemplate configured; cannot register');
+        return;
+      }
+      this.logger.info(`[Auth] Scheduling first-time register for "${username}" on ${serverKey} in ${firstDelay} ms: ${cmd}`);
+      setTimeout(() => {
+        try {
+          if (!this.bot) return;
+          sendAuthCommand(cmd);
+
+          // If a confirm template is provided, chain it after a delay, then mark as registered
+          const confirmCmd = confirmTpl ? render(confirmTpl) : null;
+          if (confirmCmd) {
+            this.logger.info(`[Auth] Scheduling registration confirm for "${username}" on ${serverKey} in ${confirmDelay} ms after first command: ${confirmCmd}`);
+            setTimeout(() => {
+              try {
+                if (!this.bot) return;
+                sendAuthCommand(confirmCmd);
+                this.loginCache.markServerRegistration(username, serverKey);
+              } catch (err) {
+                this.logger.error('[Auth] Failed to send registration confirm command:', err);
+              }
+            }, Math.max(0, confirmDelay));
+          } else {
+            // No confirm step configured; mark registration now
+            this.loginCache.markServerRegistration(username, serverKey);
+          }
+        } catch (err) {
+          this.logger.error('[Auth] Failed to send register command:', err);
+        }
+      }, firstDelay);
+      return;
+    }
+
+    // Already registered – optionally send a login command if configured
+    this.loginCache.markServerRegistration(username, serverKey); // update lastSeen
+    if (loginTpl) {
+      const loginCmd = render(loginTpl);
+      if (loginCmd) {
+        this.logger.info(`[Auth] Scheduling login-on-join for "${username}" on ${serverKey} in ${loginDelay} ms: ${loginCmd}`);
+        setTimeout(() => {
+          try {
+            if (!this.bot) return;
+            sendAuthCommand(loginCmd);
+          } catch (err) {
+            this.logger.error('[Auth] Failed to send login-on-join command:', err);
+          }
+        }, loginDelay);
+      }
+    }
   }
 
   onEnd() {
@@ -682,6 +1003,7 @@ export class BotController {
     // Handler for incoming manager messages (out-of-band)
     this._managerMsgHandler = (msg) => {
       try {
+        if (!this.activated) return; // ignore while inactive
         if (msg.to && msg.to !== this.username) return; // not for me
         // If behavior exists to handle manager messages, call it
         if (this.behaviors.messageHandler && typeof this.behaviors.messageHandler.handleManagerMessage === 'function') {
@@ -697,6 +1019,7 @@ export class BotController {
 
     const pollFn = async () => {
       try {
+        if (!this.activated) return; // do not claim tasks while inactive
         if (!this.bot || !this.bot.entity) return;
         const task = this.taskManager.claimNextTask(this.username);
         if (!task) return;

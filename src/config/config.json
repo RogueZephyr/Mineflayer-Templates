@@ -29,10 +29,36 @@
     "enabled": false
   },
   
+  "_security": "Security and login cache settings",
+  "security": {
+    "botLoginCache": {
+      "filePath": "./src/config/botLoginCache.json",
+      "firstLoginCommandTemplate": "/password set {password}",
+      "firstLoginCommandDelayMs": 3000,
+      "firstLoginConfirmCommandTemplate": "/password confirm {password}",
+      "firstLoginConfirmCommandDelayMs": 4000,
+      "loginOnJoinCommandTemplate": "/login {password}",
+      "loginCommandDelayMs": 12000,
+      "serverOverrides": {},
+      "_templatesHelp": "Use placeholders {password}, {confirm}, {username}. Optional second-step register template: firstLoginConfirmCommandTemplate (delay is relative to first). Override per server via serverOverrides using key 'host:port'"
+    }
+  },
+  
+  "_chat": "Global chat settings (cooldowns, filters, etc.)",
+  "chat": {
+    "cooldown": {
+      "enabled": true,
+      "minIntervalMs": 1500,
+      "loginGraceMs": 10000,
+      "_minIntervalMsHelp": "Minimum delay between chat messages sent by the bot to reduce spam/kicks. Default: 1500ms",
+      "_loginGraceMsHelp": "Time after login during which all chat is delayed and queued. Default: 10000ms"
+    }
+  },
+  
   "behaviors": {
     "_lookBehavior": "Look Behavior - Bot looks at nearby entities and players",
     "look": {
-      "updateInterval": 5,
+      "updateInterval": 0.5,
       "maxDistance": 6
     },
     
@@ -65,7 +91,16 @@
     
     "_idleBehavior": "Idle Behavior - Bot goes to idle area and waits for tasks or night",
     "idle": {
-      "idleLocation": { "x": 352, "y": 63, "z": 217 }
+      "idleLocation": { "x": 352, "y": 63, "z": 217 },
+      "roam": {
+        "enabled": true,
+        "radius": 6,
+        "minPauseMs": 3000,
+        "maxPauseMs": 9000,
+        "interactChance": 0.35,
+        "lookAroundChance": 0.5,
+        "openContainers": false
+      }
     },
     
     "_woodcuttingBehavior": "Woodcutting Behavior - Bot harvests trees, pillars up tall trees, replants saplings",

@@ -53,11 +53,26 @@ export default class LookBehavior {
 
   _startLooking() {
     if (this.lookInterval) return;
-    
+
+    // Support both legacy ms-based interval (config.interval) and new
+    // seconds-based config.updateInterval. If updateInterval is provided,
+    // treat it as seconds; otherwise fall back to interval in ms.
+    const intervalSec =
+      typeof this.config.updateInterval === 'number'
+        ? this.config.updateInterval
+        : null;
+
+    const intervalMs =
+      intervalSec !== null
+        ? Math.max(intervalSec * 1000, 200) // clamp to at least 200ms
+        : typeof this.config.interval === 'number'
+          ? Math.max(this.config.interval, 200)
+          : 1000; // default: 1s
+
     this.lookInterval = setInterval(() => {
       if (!this.enabled || this.paused) return;
       this.updateLookTarget();
-    }, this.config.interval || 5000);
+    }, intervalMs);
   }
 
   onEntitySpawn(entity) {

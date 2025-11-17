@@ -13,13 +13,13 @@ The MiningBehavior provides modular mining strategies with inventory-aware stopp
   - Layer-by-layer downward excavation
   - Multi-chest deposit system with automatic fallback
   - 80% inventory threshold for efficient operation
-  - Conservative pathfinding to prevent accidental digging
+  - Free navigation within the quarry (no conservative digging bias)
   - Automatic cleanup pass for missed blocks
 - **Block Verification System**: Ensures all blocks are actually broken before continuing
   - Retry logic with configurable attempts
   - Post-dig verification delay to accommodate server tick latency
   - Prevents ghost blocks and incomplete mining
-- **Tool Management**: Automatically equips best available pickaxe via ToolHandler
+- **Tool Management**: Automatically equips best available tool via ToolHandler (pickaxe/shovel/etc.)
 - **Inventory Management**: Auto-deposit when inventory fills up
 - **Multi-Chest Deposit System**: Tries multiple chests automatically
   - Finds all nearby chests within 15 blocks
@@ -36,10 +36,13 @@ The MiningBehavior provides modular mining strategies with inventory-aware stopp
 - **Pathfinding Integration**: Uses centralized pathfinding with path caching
 - **Multi-bot Coordination**: Respects shared coordinator for multi-bot setups
 
+- **Vein Mining**: Detects ores and mines connected veins automatically
+  - Automatic vein mining when encountering ore during any mining mode
+  - Continuous vein mining mode scans and mines all ores within a radius until inventory threshold
+
 ### Placeholder Features (Future Implementation)
 - **Stairway Access for Quarries**: Automatic stairway generation for deep quarries
 - **Torch Placement**: Automatic torch placement at configurable intervals
-- **Vein Mining**: Enhanced ore detection and contiguous vein mining
 - **Tool Restocking**: Auto-restock tools from designated chest
 - **Light Level Checks**: Safety checks for adequate lighting
 - **Mob Avoidance**: Detect and respond to hostile mobs
@@ -97,7 +100,7 @@ Excavates a 21x21 block area from coordinates (100, 200) to (120, 220), going do
 - Digs in horizontal slices, layer by layer going downward
 - Automatically deposits when inventory reaches ~80% full
 - Uses multiple nearby chests with automatic fallback if first chest is full
-- Applies conservative pathfinding (only digs planned blocks)
+- Does not apply conservative digging; bot navigates freely within the quarry area
 - Runs cleanup pass at the end to catch any missed blocks
 
 #### Other Commands
@@ -105,6 +108,29 @@ Excavates a 21x21 block area from coordinates (100, 200) to (120, 220), going do
 !mine stop           # Stop current mining operation
 !mine status         # Show mining status and progress
 !mine deposit        # Deposit inventory (keeps tools/essentials)
+```
+
+#### Vein Mining
+```
+!mine vein [radius]          # Continuous vein mining; scans area and mines all veins until inventory threshold
+!mine vein <x> <y> <z>       # Mine a single vein starting at the specified coordinates
+!mine scan [x y z]           # Scan a vein without mining (at crosshair or specified position)
+!mine vein focus list        # Show current focus filter
+!mine vein focus set <ores>  # Replace focus filter (e.g., diamond iron quartz)
+!mine vein focus add <ores>  # Add ores to focus filter
+!mine vein focus remove <ores> # Remove ores from focus filter
+!mine vein focus clear       # Disable focus mode
+```
+
+Notes:
+- Default continuous scan radius comes from config; you can override with an explicit radius.
+- During regular mining, if the target block is an ore and vein mining is enabled, the bot will mine the connected vein automatically before resuming the plan.
+- Focus mode: when enabled, only the specified ores are mined by the vein-mining logic (both continuous mode and automatic vein expansions). Normal plan mining still proceeds even if the block is not in focus.
+
+Optional new protocol (also supported):
+```
+!mine <strip|tunnel|quarry|vein> start [params]
+!mine <strip|tunnel|quarry> stop
 ```
 
 ### Programmatic API
@@ -138,6 +164,12 @@ Located in `src/config/config.json` under `behaviors.mining`:
 - `depositThreshold`: Number of items before auto-deposit (default: 320 = 5 stacks)
 - `returnOnFullInventory`: Auto-return to chest when full (default: true)
 
+### Navigation/Reach Settings
+- `digReachDistance`: Max block breaking reach distance (default: 5)
+- `digApproachRange`: How close to get before breaking when approaching (default: 3.5)
+- `digRetryLimit`: Attempts to re-try a dig before giving up (default: 3)
+- `lookAheadDistance`: How far ahead to scan slices for obstacles (default: 12)
+
 ### Strip Mining Settings
 - `stripMainTunnelHeight`: Height of main tunnel (default: 2)
 - `stripMainTunnelWidth`: Width of main tunnel (default: 1)
@@ -156,13 +188,17 @@ Located in `src/config/config.json` under `behaviors.mining`:
 ### Tool Management
 - `toolMinDurability`: Minimum durability before tool replacement (default: 10)
 
+### Deposit Keep Rules
+- `keepBridgingTotal`: Keep up to this many total bridging blocks across the materials list when depositing (default: 64)
+- `keepFoodMin`: Keep at least this many edible items when depositing (default: 16)
+
 ### Obstacle Handling *(NEW v2.0.1)*
 - `handleObstacles`: Enable automatic obstacle detection and handling (default: true)
 - `bridgeGaps`: Automatically bridge gaps/holes (default: true)
 - `coverWater`: Cover water pockets with blocks (default: true)
 - `coverLava`: Cover lava pockets with blocks (default: true)
 - `bridgingMaterials`: Priority list of materials for bridging
-  - Default: `["cobblestone", "dirt", "stone", "andesite", "diorite", "granite", "netherrack"]`
+  - Default: `["cobblestone", "cobbled_deepslate", "dirt", "andesite", "diorite", "granite", "netherrack"]`
   - Bot uses first available material from the list
 - `maxBridgeDistance`: Maximum distance to bridge in one go (default: 5)
 
@@ -174,7 +210,7 @@ Located in `src/config/config.json` under `behaviors.mining`:
 **How It Works:**
 When mining, the bot:
 1. Checks for obstacles **before** digging (prevents mining into voids)
-2. Checks for obstacles **after** digging (handles exposed cavities)
+2. Checks for obstacles **after** digging (handles exposed liquids/cavities)
 3. Checks floor constantly (maintains safe footing and Y level)
 4. Automatically places blocks to bridge/cover obstacles
 5. Continues mining at the same Y level
@@ -188,6 +224,15 @@ When mining, the bot:
 - `checkLightLevel`: Enable light level safety checks (default: false)
 - `minLightLevel`: Minimum safe light level (default: 8)
   - **Note**: Not yet implemented
+
+### Vein Mining Settings
+- `veinMiningEnabled`: Enable automatic vein mining when encountering ore (default: true)
+- `veinMaxBlocks`: Max blocks to include when scanning a single vein (default: 64)
+- `veinSearchRadius`: Max distance from the start block when scanning a vein (default: 16)
+- `continuousVeinScanRadius`: Default scan radius for continuous vein mining (default: 32)
+- `continuousVeinInventoryThreshold`: Stop continuous vein mining when total items reach this count (default: 320)
+- `veinFocusTypes`: Optional array of ore names to restrict vein mining to (e.g., `["diamond", "iron", "ancient_debris"]`).
+  - Accepts full block IDs (e.g., `diamond_ore`, `deepslate_diamond_ore`) or friendly aliases (e.g., `diamond`, `iron`, `quartz`, `debris`).
 
 ## Mining Strategies
 
@@ -210,6 +255,8 @@ Creates a tunnel in the specified direction (default 3x3, configurable), ideal f
 - Rail systems
 - Exploring caves
 
+Implementation detail: Tunnel mode applies a conservative digging bias so only blocks in the planned tunnel volume are dug, reducing accidental excavation.
+
 ### Quarry Mining
 Excavates a rectangular area layer by layer going downward:
 ```
@@ -225,6 +272,8 @@ Layer 3: ████████████  (Continues downward)
 - Automatic multi-chest management
 - Deposits at 80% full (minimizes trips)
 - Perfect for creating underground rooms or quarrying resources
+
+Note: Quarry mode does not use conservative digging; the bot must navigate and dig freely within the assigned area while respecting obstacle safety.
 
 **Best Practices:**
 - Place multiple chests near the quarry area before starting

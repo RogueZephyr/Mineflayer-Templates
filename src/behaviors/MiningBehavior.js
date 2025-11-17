@@ -119,6 +119,14 @@ export default class MiningBehavior {
     } catch (_) {
       this._foodList = { edible: [] };
     }
+
+    // Vein mining focus mode (optional): when set, only these ore names are mined in vein modes
+  const cfgFocus = (bot && bot.config && bot.config.behaviors && bot.config.behaviors.mining) || {};
+  const initialFocus = Array.isArray(cfgFocus.veinFocusTypes) ? cfgFocus.veinFocusTypes : [];
+    this.veinFocus = {
+      enabled: initialFocus.length > 0,
+      types: new Set(initialFocus)
+    };
   }
 
   setLookBehavior(lookBehavior) {
@@ -1413,19 +1421,23 @@ export default class MiningBehavior {
         if (this.bot.oreScanner && this._isVeinMiningEnabled()) {
           const isOre = this.bot.oreScanner.isOre(blockToDig.name);
           if (isOre) {
-            this._emitDebug(`Detected ore ${blockToDig.name} at ${pos}, checking for vein`);
-            const veinMined = await this._veinMine(pos);
-            if (veinMined) {
-              // Vein was mined, check if current block is now air
-              const afterBlock = this.bot.blockAt(pos);
-              if (!afterBlock || afterBlock.type === 0) {
-                this._emitDebug('Current ore block mined as part of vein');
-                return true;
+            if (!this._isVeinFocusAllowed(blockToDig.name)) {
+              this._emitDebug(`Ore ${blockToDig.name} not in focus; skipping vein expansion`);
+            } else {
+              this._emitDebug(`Detected ore ${blockToDig.name} at ${pos}, checking for vein`);
+              const veinMined = await this._veinMine(pos);
+              if (veinMined) {
+                // Vein was mined, check if current block is now air
+                const afterBlock = this.bot.blockAt(pos);
+                if (!afterBlock || afterBlock.type === 0) {
+                  this._emitDebug('Current ore block mined as part of vein');
+                  return true;
+                }
+                // Block still exists, continue with normal mining
+                this._emitDebug('Vein mined but current block still exists, mining it now');
               }
-              // Block still exists, continue with normal mining
-              this._emitDebug('Vein mined but current block still exists, mining it now');
+              // If vein mining failed or was skipped, continue with normal dig
             }
-            // If vein mining failed or was skipped, continue with normal dig
           }
         }
         
@@ -2067,8 +2079,10 @@ export default class MiningBehavior {
     let scanIterations = 0;
     let oresFoundByType = {};
 
-    this.logger.info(`[Mining] Starting continuous vein mining (radius: ${radius}, stop at: ${inventoryThreshold}/400 slots)`);
-    this.logger.info('[Mining] Send !stop or !home to stop mining');
+  const focusInfo = this.getVeinFocus();
+  this.logger.info(`[Mining] Starting continuous vein mining (radius: ${radius}, stop at: ${inventoryThreshold}/400 slots)`);
+  if (focusInfo.enabled) this.logger.info(`[Mining] Focus mode: ${focusInfo.list.join(', ')}`);
+  this.logger.info('[Mining] Send !stop or !home to stop mining');
 
     try {
       while (this.enabled && this.isWorking) {
@@ -2084,7 +2098,11 @@ export default class MiningBehavior {
 
         // Find all ores in radius
         const botPos = this.bot.entity.position;
-        const oresFound = this._findOresInRadius(botPos, radius);
+        let oresFound = this._findOresInRadius(botPos, radius);
+        // Focus filter
+        if (focusInfo.enabled) {
+          oresFound = oresFound.filter(o => this._isVeinFocusAllowed(o.block?.name));
+        }
 
         if (oresFound.length === 0) {
           this.logger.info('[Mining] No ores found in scan radius, stopping');
@@ -2295,6 +2313,15 @@ export default class MiningBehavior {
       const maxBlocks = cfg.veinMaxBlocks || 64;
       const searchRadius = cfg.veinSearchRadius || 16;
 
+      // Respect focus mode: if seed ore type is not allowed, skip
+      try {
+        const startBlock = this.bot.blockAt(orePosition);
+        if (startBlock && !this._isVeinFocusAllowed(startBlock.name)) {
+          this._emitDebug(`Vein focus active: skipping vein for ${startBlock.name}`);
+          return false;
+        }
+      } catch (_) {}
+
       this._emitDebug(`Scanning vein from ${orePosition} (max: ${maxBlocks} blocks, radius: ${searchRadius})`);
 
       // Scan the vein
@@ -2457,6 +2484,79 @@ export default class MiningBehavior {
   _isVeinMiningEnabled() {
     const cfg = this.bot.config?.behaviors?.mining || {};
     return cfg.veinMiningEnabled !== false; // Enabled by default
+  }
+
+  /**
+   * Check if current focus mode allows this ore name (if focus is enabled)
+   * @param {string} oreName
+   * @returns {boolean}
+   */
+  _isVeinFocusAllowed(oreName) {
+    try {
+      if (!this.veinFocus || !this.veinFocus.enabled) return true;
+      if (this.veinFocus.types.has(oreName)) return true;
+      const aliases = this._expandOreAlias(oreName);
+      return aliases.some(n => this.veinFocus.types.has(n));
+    } catch (_) { return true; }
+  }
+
+  /**
+   * Expand a provided ore name to common aliases (overworld/deepslate/nether variants)
+   * Input may be a block name or a friendly alias like 'diamond'
+   * Returns a list of plausible block names to check.
+   */
+  _expandOreAlias(name) {
+    const n = String(name || '').toLowerCase();
+    const out = new Set();
+    const add = (s) => { if (s) out.add(s); };
+    if (n.includes('_ore') || n === 'ancient_debris') { add(n); return Array.from(out); }
+    const baseMap = {
+      diamond: ['diamond_ore', 'deepslate_diamond_ore'],
+      iron: ['iron_ore', 'deepslate_iron_ore'],
+      gold: ['gold_ore', 'deepslate_gold_ore', 'nether_gold_ore'],
+      redstone: ['redstone_ore', 'deepslate_redstone_ore'],
+      emerald: ['emerald_ore', 'deepslate_emerald_ore'],
+      lapis: ['lapis_ore', 'deepslate_lapis_ore'],
+      coal: ['coal_ore', 'deepslate_coal_ore'],
+      copper: ['copper_ore', 'deepslate_copper_ore'],
+      quartz: ['nether_quartz_ore'],
+      debris: ['ancient_debris']
+    };
+    if (baseMap[n]) baseMap[n].forEach(add);
+    add(`${n}_ore`);
+    add(`deepslate_${n}_ore`);
+    return Array.from(out);
+  }
+
+  // Public API for focus mode
+  setVeinFocus(list) {
+    try {
+      const expanded = new Set();
+      (list || []).forEach(item => this._expandOreAlias(item).forEach(n => expanded.add(n)));
+      this.veinFocus = { enabled: expanded.size > 0, types: expanded };
+      this.logger.info(`[Mining] Vein focus ${this.veinFocus.enabled ? 'enabled' : 'disabled'}: ${Array.from(expanded).join(', ')}`);
+    } catch (e) { this.logger.warn(`[Mining] Failed to set vein focus: ${e.message}`); }
+  }
+  addVeinFocus(list) {
+    if (!this.veinFocus) this.veinFocus = { enabled: false, types: new Set() };
+    (list || []).forEach(item => this._expandOreAlias(item).forEach(n => this.veinFocus.types.add(n)));
+    this.veinFocus.enabled = this.veinFocus.types.size > 0;
+    this.logger.info(`[Mining] Vein focus updated: ${Array.from(this.veinFocus.types).join(', ')}`);
+  }
+  removeVeinFocus(list) {
+    if (!this.veinFocus) return;
+    (list || []).forEach(item => this._expandOreAlias(item).forEach(n => this.veinFocus.types.delete(n)));
+    this.veinFocus.enabled = this.veinFocus.types.size > 0;
+    this.logger.info(`[Mining] Vein focus updated: ${this.veinFocus.enabled ? Array.from(this.veinFocus.types).join(', ') : 'disabled'}`);
+  }
+  clearVeinFocus() {
+    this.veinFocus = { enabled: false, types: new Set() };
+    this.logger.info('[Mining] Vein focus cleared (disabled)');
+  }
+  getVeinFocus() {
+    const enabled = !!(this.veinFocus && this.veinFocus.enabled);
+    const list = enabled ? Array.from(this.veinFocus.types) : [];
+    return { enabled, list };
   }
 
   /**
