@@ -20,11 +20,13 @@ Features multi-bot coordination, whitelist permissions, graceful shutdown, farmi
 - **Master override** - Master player always has full access
 - **Secure by default** - Non-whitelisted players are silently ignored
 
-### 💬 Communication
+### 💬 Communication & Control
 - **Whisper support** - Commands work via `/msg` (no chat spam!)
 - **Custom whisper formats** - Configurable patterns for different server plugins
 - **Bot-targeted commands** - Direct commands to specific bots
-- **Smart replies** - Bots reply via whisper when whispered to
+- **Silent mode** - Suppress in‑game replies; console-only output when enabled
+- **Per-bot activation** - Bots auto-login/register but remain idle until you activate them
+- **Smart replies** - Bots reply via whisper when whispered to (or console when silent)
 - **Debug system** - Module-specific debug logging
 
 ### 🏠 Home & Logout
@@ -49,11 +51,14 @@ Features multi-bot coordination, whitelist permissions, graceful shutdown, farmi
 
 ### ⛏️ Mining Automation
 - **Strip mining** - Main tunnel with alternating side branches for optimal ore visibility
-- **Tunnel mining** - Create 2x2 directional tunnels (north/south/east/west)
-- **Smart tool management** - Automatically switches between pickaxe (stone) and shovel (dirt)
-- **Inventory management** - Auto-deposits materials when inventory fills
-- **Progress tracking** - Real-time status and block count
-- **Configurable patterns** - Adjust branch spacing, tunnel dimensions, and deposit thresholds
+- **Tunnel mining** - Create configurable tunnels (defaults 2×2; custom width/height supported)
+- **Quarry** - Excavate rectangular areas in layers; manager supports dynamic group add/remove
+- **Vein mining** - Automatic expansion from an ore block; continuous scan mode available
+- **Vein focus mode** - Restrict vein mining to specified ores (e.g., diamond, iron)
+- **Smart tool management** - Automatically switches between pickaxe/shovel
+- **Obstacle handling** - Bridges gaps; covers water/lava; maintains desired floor Y
+- **Inventory & deposits** - Auto-deposit with keep rules (keep bridging blocks/food)
+- **Progress tracking** - Real-time status and block count; manager aggregation
 
 ### 🔧 Intelligent Tool System
 - **Automatic tool selection** - Identifies optimal tool for any block (200+ block types mapped)
@@ -128,6 +133,10 @@ Mineflayer_BasicBot/
 - `whoami` - Display your permission level
 - `say <message>` - Make bot say something
 
+### Activation & Silent Mode
+- `activate` / `deactivate` - Manually enable or pause a bot (per-bot)
+- `silent <on|off|status>` - Toggle console-only replies (no in-game chat)
+
 ### Movement
 - `come` - Bot comes to you
 - `goto <x> <y> <z>` - Navigate to coordinates
@@ -155,8 +164,15 @@ Mineflayer_BasicBot/
 ### Mining
 - `mine strip <direction> [mainLength] [numBranches]` - Start strip mining
   - Example: `mine strip east 100 10`
-- `mine tunnel <direction> [length]` - Create 2x2 tunnel
-  - Example: `mine tunnel north 50`
+- `mine tunnel <direction> [length] [width] [height]` - Create tunnel (default 2x2)
+  - Examples: `mine tunnel north 50`, `mine tunnel south 30 4 3`
+- `mine quarry <x1> <z1> <x2> <z2> <depth>` - Excavate layered area
+  - Example: `mine quarry 100 200 120 220 10`
+- `mine vein [radius]` - Continuous ore mining (scans area)
+  - Focus controls: `mine vein focus <list|set|add|remove|clear> [ores...]`
+  - Example: `mine vein focus set diamond iron gold`
+- `mine scan [x y z]` - Scan an ore vein without mining
+- `mine deposit` - Deposit inventory after the current mining run
 - `mine stop` - Stop current mining operation
 - `mine status` - Show mining progress and stats
 - Directions: north, south, east, west
@@ -194,6 +210,20 @@ Mineflayer_BasicBot/
 - `whisper list` - List active whisper patterns (master only)
 - `whisper test <text>` - Test whisper pattern matching (master only)
 
+### 🧩 Manager (multi-bot)
+- `manager status` — Summary of leader and online workers
+- `manager list` — List all registered workers with uptime
+- `manager leader` — Show the current leader
+- `manager elect` — Force a leader re‑election
+
+- `mine quarry group` — Show current quarry group membership
+- `mine quarry add <bot1> [bot2 ...]` — Add bots to active quarry group (leader only); zones are recomputed without stopping
+- `mine quarry remove <bot1> [bot2 ...]` — Remove bots from quarry group (leader only); zones are recomputed without stopping
+
+Notes:
+- Add/remove requires the BotManager to be active; unknown bot names are ignored with a warning.
+- When a leader exists, only the leader may run quarry add/remove; others will defer to the leader.
+
 ### 🎯 Targeting Specific Bots
 Commands can target specific bots by including the bot name:
 ```
@@ -210,7 +240,7 @@ Without a bot name, all bots respond:
 
 ---
 
-## �️ Console commands (from your terminal)
+## 🖥️ Console commands (from your terminal)
 
 You can control bots directly from the terminal where you launched them. This avoids in‑game spam and is great for multi‑bot orchestration.
 
@@ -244,7 +274,7 @@ Notes:
 
 ---
 
-## �🚀 Quick Start
+## 🚀 Quick Start
 
 ### Installation
 ```bash
@@ -305,6 +335,14 @@ Press **Ctrl+C** to:
 
 ## 💡 Usage Examples
 
+### Activating a bot and enabling silent mode
+```bash
+# From the terminal where you started the bot(s)
+!activate             # Activate the current bot
+!BotName activate     # Activate a specific bot
+!silent on            # Suppress in-game replies; print to console instead
+```
+
 ### Setting Up Farming
 ```bash
 # In-game, whisper to bot:
@@ -338,6 +376,13 @@ Press **Ctrl+C** to:
 # Tunnel mining - create a 2x2 tunnel
 # Creates 50-block tunnel heading north
 /msg RogueW0lfy mine tunnel north 50
+
+# Quarry - layered excavation (x1 z1 x2 z2 depth)
+/msg RogueW0lfy mine quarry 100 200 120 220 10
+
+# Vein mining - continuous scan (optional focus)
+/msg RogueW0lfy mine vein 32
+/msg RogueW0lfy mine vein focus set diamond iron gold
 
 # Check mining progress
 /msg RogueW0lfy mine status
@@ -507,7 +552,39 @@ The bot automatically caches successful pathfinding routes, dramatically reducin
 }
 ```
 
-See [PATH_CACHING.md](docs/PATH_CACHING.md) for detailed documentation.
+See [PATH_CACHING_IMPLEMENTATION.md](docs/PATH_CACHING_IMPLEMENTATION.md) for detailed documentation.
+
+### 🔐 Authentication & Bot Login Cache
+Bots auto-register/login on join using per-bot credentials stored locally. This prevents retyping `/register` and `/login` on servers that require it.
+
+- Per-bot password is generated and cached on first use
+- First-time register and login-on-join commands are fully configurable
+- Auth commands are sent even when silent mode is ON (they bypass chat suppression)
+
+See docs: [BOT_LOGIN_CACHE.md](docs/BOT_LOGIN_CACHE.md)
+
+Example configuration (`config.json`):
+```jsonc
+{
+  "security": {
+    "botLoginCache": {
+      "filePath": "./src/config/botLoginCache.json",
+      "firstLoginCommandTemplate": "/register {password} {confirm}",
+      "firstLoginCommandDelayMs": 3000,
+      "firstLoginConfirmCommandTemplate": "/password confirm {password}",
+      "firstLoginConfirmCommandDelayMs": 4000,
+      "loginOnJoinCommandTemplate": "/login {password}",
+      "loginCommandDelayMs": 12000,
+      "serverOverrides": {
+        "example.net:25565": {
+          "firstLoginCommandTemplate": "/auth register {password} {confirm}",
+          "loginOnJoinCommandTemplate": "/auth login {username} {password}"
+        }
+      }
+    }
+  }
+}
+```
 
 ### Custom Whisper Pattern Support
 The bot supports multiple whisper message formats for different server plugins:
