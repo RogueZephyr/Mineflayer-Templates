@@ -41,6 +41,13 @@
       "loginCommandDelayMs": 12000,
       "serverOverrides": {},
       "_templatesHelp": "Use placeholders {password}, {confirm}, {username}. Optional second-step register template: firstLoginConfirmCommandTemplate (delay is relative to first). Override per server via serverOverrides using key 'host:port'"
+    },
+    "privateBridge": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 8080,
+      "secret": "",
+      "_help": "Enable the local WebSocket bridge for MineScript private commands. Bind to localhost only."
     }
   },
   

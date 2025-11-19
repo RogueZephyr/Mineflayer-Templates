@@ -6,7 +6,7 @@
       "host": "172.240.8.162",
       "port": 47219,
       "version": "1.21.1",
-      "lastUsed": 1763330488030
+      "lastUsed": 1763512172332
     },
     {
       "alias": "test",
@@ -16,32 +16,18 @@
       "lastUsed": 1762592227918
     },
     {
-      "alias": "xxrp-smp.modrinth.gg",
-      "host": "xxrp-smp.modrinth.gg",
-      "port": 24936,
-      "version": "1.21.1",
-      "lastUsed": 1763325604441
-    },
-    {
       "alias": "172.240.8.162",
       "host": "172.240.8.162",
       "port": 47219,
       "version": "1.21.1",
-      "lastUsed": 1763330488922
+      "lastUsed": 1763512185716
     },
     {
-      "alias": "extremecraft",
-      "host": "sl.extremecraft.net",
-      "port": 25565,
+      "alias": "xxrp-smp.modrinth.gg",
+      "host": "xxrp-smp.modrinth.gg",
+      "port": 24936,
       "version": "1.21.1",
-      "lastUsed": 1762590547475
-    },
-    {
-      "alias": "sl.extremecraft.net",
-      "host": "sl.extremecraft.net",
-      "port": 25565,
-      "version": "1.21.1",
-      "lastUsed": 1762590420062
+      "lastUsed": 1763430917870
     }
   ]
 }
