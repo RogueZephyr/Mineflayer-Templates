@@ -8,6 +8,7 @@ import { hideBin } from 'yargs/helpers';
 
 // Parse CLI arguments
 const argv = yargs(hideBin(process.argv))
+  .version(false) // Disable built-in version command to allow --version as server version option
   .option('bots', {
     alias: 'b',
     describe: 'Number of bots to spawn',
@@ -63,8 +64,10 @@ if (argv['add-server']) {
     console.error('Usage: --add-server --alias NAME --host HOST --port PORT [--version v]');
     process.exit(1);
   }
-  serverRegistry.upsert({ alias, host: argv.host, port: argv.port, version: argv.version || 'auto' });
-  console.log(`Saved server '${alias}' -> ${argv.host}:${argv.port} (${argv.version || 'auto'})`);
+  const entry = { alias, host: argv.host, port: argv.port };
+  if (argv.version) entry.version = argv.version;
+  const saved = serverRegistry.upsert(entry);
+  console.log(`Saved server '${alias}' -> ${argv.host}:${argv.port} (${saved.version})`);
   process.exit(0);
 }
 
@@ -110,7 +113,7 @@ setInterval(() => {
 async function promptBotCount() {
   // Non-interactive mode: use CLI arg or default
   if (argv['non-interactive'] || argv.bots !== null) {
-    const count = argv.bots || 1;
+    const count = argv.bots !== null ? argv.bots : 1;
     console.log(`Non-interactive mode: spawning ${count} bot(s)`);
     return count;
   }

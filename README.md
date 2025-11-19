@@ -586,6 +586,42 @@ Example configuration (`config.json`):
 }
 ```
 
+### 🔒 Private Bridge (Minescript Integration)
+Control bots privately from a Minescript-enabled client without exposing commands to the public server chat.
+
+**What it provides:**
+- Local-only WebSocket server (binds to 127.0.0.1) started when `security.privateBridge.enabled=true`.
+- Python Minescript script (`private-bot-control/minescript/private_bridge.py`) intercepts `/come`, `/follow`, `/mine`, `/hello` and streams your position/crosshair to the bot.
+- Commands never reach the server—only the Node bridge—reducing spam and keeping control private.
+
+**Commands (Minescript side):**
+- `/come` – Bot walks near you.
+- `/follow` – Bot follows continuously (stops when you issue another task).
+- `/mine` – Bot mines the block under your crosshair using its mining/ToolHandler systems.
+- `/hello` – Simple connectivity test; bot logs a greeting (may send chat if not silent).
+
+**Enabling:** In `src/config/config.json` set:
+```jsonc
+{
+  "security": {
+    "privateBridge": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 8080,
+      "secret": "" // optional shared secret
+    }
+  }
+}
+```
+
+**Running Minescript script:**
+1. Install Python dependency: `pip install websockets` (in the environment Minescript uses).
+2. Start bot(s) with bridge enabled.
+3. In-game run the job (example): `\private_bridge ws://127.0.0.1:8080`.
+4. Use `/hello` first to verify connectivity, then the other commands.
+
+See `private-bot-control/minescript/README.md` for detailed usage.
+
 ### Custom Whisper Pattern Support
 The bot supports multiple whisper message formats for different server plugins:
 

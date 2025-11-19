@@ -36,6 +36,9 @@ import BotLoginCache from './BotLoginCache.js';
 // NOTE: Legacy 'fs' import removed to satisfy lint (unused)
 import fsp from 'fs/promises';
 import path from 'path';
+// Bridge (private command system) - optional
+import { startBridgeServer, getBridgeStatus } from '../../private-bot-control/bridge/server.js';
+import { wireBotToBridge } from '../../private-bot-control/mineflayer/bridgeClient.js';
 
 export class BotController {
   static usernameList = null
@@ -604,6 +607,19 @@ export class BotController {
     this.bot.homeBehavior = this.behaviors.home; // Make accessible via bot object
   this.logger.info('HomeBehavior initialized successfully!');
 
+    // Start Bridge server once per process (optional, gated by config)
+    try {
+      const pb = this.config?.security?.privateBridge || {};
+      if (pb.enabled && !BotController._bridgeServerStarted) {
+        startBridgeServer({ host: pb.host, port: pb.port, secret: pb.secret });
+        BotController._bridgeServerStarted = true;
+        const st = getBridgeStatus();
+        this.logger.info(`[Bridge] Started on ${st.host}:${st.port}`);
+      }
+    } catch (e) {
+      this.logger.warn(`[Bridge] Failed to start: ${e?.message || e}`);
+    }
+
     this.behaviors.chatCommands = new ChatCommandHandler(this.bot, this.master, this.behaviors, this.config);
     // Expose for external controllers (dashboard runtime) to invoke commands directly
     // This is required because the Electron runtime calls controller.bot.chatCommandHandler.handleMessage(...)
@@ -618,6 +634,17 @@ export class BotController {
         this.logger.warn(`ChatCommandHandler init failed: ${e.message || e}`);
       }
     })();
+
+    // Wire this bot to the bridge so it can handle private commands (come/follow/mine)
+    try {
+      const pb = this.config?.security?.privateBridge || {};
+      if (pb.enabled) {
+        wireBotToBridge(this.bot, this.logger);
+        this.logger.info('[Bridge] Bot wired to private command bridge');
+      }
+    } catch (e) {
+      this.logger.warn(`[Bridge] Wiring failed: ${e?.message || e}`);
+    }
 
     // Set up hunger check interval (gated by activation; logs only in debug mode)
     if (this.hungerCheckInterval) {

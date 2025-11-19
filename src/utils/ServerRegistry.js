@@ -52,7 +52,7 @@ export default class ServerRegistry {
       alias,
       host: entry.host,
       port: Number(entry.port) || 25565,
-      version: entry.version && entry.version.toLowerCase() !== 'auto' ? entry.version : '1.21.1',
+      version: entry.version || '1.21.1',
       lastUsed: entry.lastUsed || Date.now()
     };
     if (existingIdx >= 0) this.data.servers[existingIdx] = { ...this.data.servers[existingIdx], ...sanitized };

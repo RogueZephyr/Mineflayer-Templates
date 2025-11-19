@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js -n -b",
+    "smp": "node src/index.js -n -b 2 -s smp",
     "install-deps": "node install.js",
     "dashboard:install": "node install-dashboard.js",
     "dashboard": "cd dashboards/electron && npm run electron:dev",
@@ -29,6 +30,7 @@
     "minecraft-data": "^3.67.0",
     "mineflayer": "^4.33.0",
     "mineflayer-pathfinder": "^2.4.5",
+  "ws": "^8.18.0",
     "socks": "^2.8.7",
     "socks5": "^1.0.1",
     "vec3": "^0.1.8",
